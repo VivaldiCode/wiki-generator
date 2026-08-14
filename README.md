@@ -1,45 +1,45 @@
 # wiki-generator
 
-Gera uma **wiki de engenharia completa e padronizada** a partir de qualquer repositório,
-usando o **Claude Code em modo headless** — com a subscrição já autenticada no CLI, sem
-`ANTHROPIC_API_KEY` e sem faturação por API.
+Generate a **complete, standardized engineering wiki** from any repository, using
+**Claude Code in headless mode** — with the subscription already authenticated in the
+CLI, no `ANTHROPIC_API_KEY` and no per-API billing.
 
-A saída é **markdown puro com wikilinks do Obsidian**: abre-se como vault, sem
-ferramentas extra.
+Output is **plain Markdown with Obsidian wikilinks**: open the folder as a vault, no
+extra tooling.
 
 ```bash
-wiki-generator --source ~/code/meu-projeto
+wiki-generator --source ~/code/my-project
 ```
 
 ---
 
-## Índice
+## Contents
 
-- [Instalação](#instalação)
-- [Guia de uso](#guia-de-uso)
-- [O que produz](#o-que-produz)
-- [Cartografia do código](#cartografia-do-código)
-- [Verificações automáticas](#verificações-automáticas)
-- [Escolher o modelo](#escolher-o-modelo)
-- [Referência de opções](#referência-de-opções)
-- [Como funciona](#como-funciona)
-- [Limitações](#limitações)
+- [Install](#install)
+- [Usage guide](#usage-guide)
+- [What it produces](#what-it-produces)
+- [Code cartography](#code-cartography)
+- [Built-in verification](#built-in-verification)
+- [Choosing a model](#choosing-a-model)
+- [Options reference](#options-reference)
+- [How it works](#how-it-works)
+- [Limitations](#limitations)
 
 ---
 
-## Instalação
+## Install
 
-Requisitos: **Python 3.10+** e o [Claude Code](https://claude.com/claude-code) instalado
-e autenticado.
+Requires **Python 3.10+** and [Claude Code](https://claude.com/claude-code) installed and
+authenticated.
 
 ```bash
-claude auth          # se ainda não estiver autenticado
+claude auth          # if not authenticated yet
 git clone https://github.com/VivaldiCode/wiki-generator.git
 cd wiki-generator
 pip install -e .
 ```
 
-Confirma:
+Verify:
 
 ```bash
 wiki-generator --version
@@ -47,68 +47,68 @@ wiki-generator --version
 
 ---
 
-## Guia de uso
+## Usage guide
 
-### 1. Um repositório
-
-```bash
-wiki-generator --source ~/code/meu-projeto
-```
-
-A wiki fica em `~/code/meu-projeto/wiki/`.
-
-### 2. Escolher onde a wiki fica
+### 1. One repository
 
 ```bash
-wiki-generator --source ~/code/meu-projeto --output ~/wikis
+wiki-generator --source ~/code/my-project
 ```
 
-Com `--output`, cada repositório recebe **uma subpasta com o seu nome**:
+The wiki lands in `~/code/my-project/wiki/`.
+
+### 2. Choose where the wiki goes
+
+```bash
+wiki-generator --source ~/code/my-project --output ~/wikis
+```
+
+With `--output`, every repository gets **its own subfolder, named after the repo**:
 
 ```
 ~/wikis/
-└── meu-projeto/
+└── my-project/
     ├── README.md
     ├── 01-overview/
     └── ...
 ```
 
-### 3. Vários repositórios de uma vez
+### 3. Several repositories at once
 
-Aponta para uma pasta que contenha vários repositórios git. Todos são descobertos e
-processados, **uma wiki por repositório** — nunca uma wiki única a misturar projetos
-independentes (arquitetura, stack e glossário partilhados não descreveriam nenhum deles).
+Point at a folder containing multiple git repositories. All of them are discovered and
+processed, **one wiki per repository** — never a single wiki mixing independent projects
+(a shared architecture, stack and glossary would describe none of them accurately).
 
 ```bash
 wiki-generator --source ~/code --output ~/wikis
 ```
 
 ```
-Detetados 4 repositorios git em /Users/eu/code:
-  - api-gateway          -> /Users/eu/wikis/api-gateway
-  - web-app              -> /Users/eu/wikis/web-app
-  - mobile               -> /Users/eu/wikis/mobile
-  - infra                -> /Users/eu/wikis/infra
+Detetados 4 repositorios git em /Users/me/code:
+  - api-gateway          -> /Users/me/wikis/api-gateway
+  - web-app              -> /Users/me/wikis/web-app
+  - mobile               -> /Users/me/wikis/mobile
+  - infra                -> /Users/me/wikis/infra
 Uma wiki por repositorio. Usa --single para gerar uma so.
 ```
 
-Sem `--output`, cada wiki fica dentro do respetivo repositório (`<repo>/wiki/`).
+Without `--output`, each wiki is written inside its own repository (`<repo>/wiki/`).
 
-Para tratar a árvore toda como **um só** projeto (monorepo sem sub-repos git separados),
-usa `--single`.
+To treat the whole tree as **one** project (a monorepo without separate git sub-repos),
+use `--single`.
 
-### 4. Ver o plano antes de gastar quota
+### 4. See the plan before spending quota
 
 ```bash
-wiki-generator --source ~/code/meu-projeto --dry-run
+wiki-generator --source ~/code/my-project --dry-run
 ```
 
-Lista todas as páginas que seriam geradas, sem chamar o modelo.
+Lists every page that would be generated, without calling the model.
 
-### 5. Acompanhar o progresso
+### 5. Follow progress
 
-O CLI reporta em tempo real. Cada página concluída aparece assim que fecha, e de 20 em
-20 segundos surge uma linha de estado com ritmo e tempo estimado:
+The CLI reports in real time. Each page shows up as soon as it completes, and every 20
+seconds a status line reports throughput and estimated time remaining:
 
 ```
 [2/7] api-gateway
@@ -125,68 +125,71 @@ Plano: 44 paginas geradas por modelo
 [3/44] + 02-architecture/overview.md
 ```
 
-`+` gerada · `=` veio da cache · `!` falhou
+`+` generated · `=` served from cache · `!` failed
 
-Para ver também o arranque de cada página, usa `--verbose`.
+Use `--verbose` to also see each page as it starts.
 
-### 6. Regeração incremental
+### 6. Incremental regeneration
 
-Cada página guarda um *fingerprint* dos ficheiros que a originaram em
-`.wiki-manifest.json`. Ao correr de novo, só as páginas cujos ficheiros de origem
-mudaram são regeradas:
+Every page stores a fingerprint of the source files it was built from, in
+`.wiki-manifest.json`. On a second run, only pages whose source files changed are
+regenerated:
 
 ```bash
-wiki-generator --source ~/code/meu-projeto        # segunda corrida: quase tudo em cache
-wiki-generator --source ~/code/meu-projeto --force # ignora a cache
+wiki-generator --source ~/code/my-project         # second run: mostly cached
+wiki-generator --source ~/code/my-project --force # ignore the cache
 ```
 
-Mudar de modelo, de idioma ou de estrutura também invalida a cache automaticamente.
+Changing the model, the language or the wiki structure also invalidates the cache
+automatically.
 
-### 7. Regerar só uma parte
+### 7. Regenerate only part of it
 
 ```bash
-# uma página específica
+# one specific page
 wiki-generator --source . --only architecture.overview
 
-# uma secção inteira
+# a whole section
 wiki-generator --source . --only architecture
 
-# um tipo de página
+# a page type
 wiki-generator --source . --only module --only reference
 ```
 
-O índice continua a listar a wiki toda, não só o que foi regerado.
+The index still lists the whole wiki, not just what was regenerated.
 
-### 8. Guardar logs para debug
+### 8. Save logs for debugging
 
 ```bash
-wiki-generator --source ~/code/meu-projeto --log-dir /tmp/wg-logs
+wiki-generator --source ~/code/my-project --log-dir /tmp/wg-logs
 ```
 
-Cada chamada ao Claude Code é gravada em `/tmp/wg-logs/<repo>/<pagina>.json` com o
-prompt enviado, o system prompt, o stdout, o stderr e o código de saída. Retentativas
-ficam com sufixo `.retryN`. Quando uma página sai errada, é aqui que se percebe porquê.
+Every Claude Code call is written to `/tmp/wg-logs/<repo>/<page>.json` with the prompt
+sent, the system prompt, stdout, stderr and the exit code. Retries get a `.retryN`
+suffix. When a page comes out wrong, this is where you find out why.
 
-> Os logs contêm o prompt completo, que inclui excertos de manifestos e a árvore de
-> ficheiros do teu repositório. Trata a pasta de logs com o mesmo cuidado que o código.
+> Logs contain the full prompt, which includes manifest excerpts and your repository's
+> file tree. Treat the log folder with the same care as the code.
 
-### 9. Repositórios grandes
+### 9. Large repositories
 
 ```bash
 wiki-generator --source . \
-  --no-reference \                 # salta a referência de baixo nível
+  --no-reference \                 # skip the low-level reference
   --max-modules 15 \
   --exclude '**/generated/**' \
   --exclude '**/*.pb.go'
 ```
 
-### 10. Idioma
+### 10. Language
+
+The wiki content language is configurable:
 
 ```bash
 wiki-generator --source . --language pt     # en (default), pt, pt-br, es, fr, de, it
 ```
 
-### 11. Ficheiro de configuração
+### 11. Configuration file
 
 ```bash
 wiki-generator --config wiki.config.json
@@ -197,285 +200,289 @@ wiki-generator --config wiki.config.json
   "repo_path": ".",
   "output_path": "./wiki",
   "model": "haiku",
-  "language": "pt",
+  "language": "en",
   "concurrency": 6,
   "max_modules": 20,
   "exclude_globs": ["**/generated/**", "**/migrations/**"]
 }
 ```
 
-Opções da linha de comandos sobrepõem-se ao ficheiro.
+Command-line options override the file.
 
 ---
 
-## O que produz
+## What it produces
 
-Uma estrutura fixa, igual em todos os repositórios — o que torna as wikis comparáveis
-entre projetos e previsíveis para quem as lê:
+A fixed structure, identical across repositories — which makes wikis comparable between
+projects and predictable to read:
 
 ```
 wiki/
-├── README.md                        índice + métricas do repositório
-├── SUMMARY.md                       índice linear
+├── README.md                        index + repository metrics
+├── SUMMARY.md                       linear index
 │
-├── 01-overview/                     ALTO NÍVEL
-│   ├── introduction.md              o que é, que problema resolve
-│   ├── tech-stack.md                linguagens, frameworks, tooling
-│   ├── repository-structure.md      mapa de diretórios e convenções
-│   └── glossary.md                  vocabulário de domínio
+├── 01-overview/                     HIGH LEVEL
+│   ├── introduction.md              what it is, what problem it solves
+│   ├── tech-stack.md                languages, frameworks, tooling
+│   ├── repository-structure.md      directory map and conventions
+│   └── glossary.md                  domain vocabulary
 │
-├── 02-architecture/                 ARQUITETURA
-│   ├── overview.md                  estilo arquitetural + diagramas de contexto
-│   ├── components.md                cada componente e as suas fronteiras
-│   ├── data-flow.md                 fluxos ponta-a-ponta + sequence diagrams
-│   ├── data-model.md                entidades, ER diagram, migrações
-│   ├── integrations.md              APIs, filas, serviços externos
-│   ├── cross-cutting.md             config, erros, logging, auth, segurança
-│   └── decisions.md                 decisões de desenho, trade-offs, dívida técnica
+├── 02-architecture/                 ARCHITECTURE
+│   ├── overview.md                  architectural style + context diagrams
+│   ├── components.md                each component and its boundaries
+│   ├── data-flow.md                 end-to-end flows + sequence diagrams
+│   ├── data-model.md                entities, ER diagram, migrations
+│   ├── integrations.md              APIs, queues, external services
+│   ├── cross-cutting.md             config, errors, logging, auth, security
+│   └── decisions.md                 design decisions, trade-offs, tech debt
 │
-├── 03-modules/<módulo>.md           MÉDIO NÍVEL — um por módulo
+├── 03-modules/<module>.md           MID LEVEL — one per module
 │
-├── 04-reference/<módulo>.md         BAIXO NÍVEL — API por ficheiro:
-│                                    símbolos, assinaturas, parâmetros, efeitos
+├── 04-reference/<module>.md         LOW LEVEL — per-file API:
+│                                    symbols, signatures, parameters, side effects
 │
 ├── 05-guides/
 │   ├── getting-started.md
 │   └── development.md
 │
 ├── 06-operations/
-│   ├── configuration.md             env vars e config que o código lê
+│   ├── configuration.md             env vars and config the code actually reads
 │   ├── deployment.md                build, CI/CD, containers
-│   └── observability.md             logs, métricas, troubleshooting
+│   └── observability.md             logs, metrics, troubleshooting
 │
-└── 07-cartography/                  CARTOGRAFIA DO CÓDIGO
-    ├── file-graph.md                grafo Mermaid: que ficheiro importa qual
-    ├── module-graph.md              grafo agregado + matriz de acoplamento
-    ├── modules/<módulo>.md          detalhe por módulo (repositórios grandes)
-    ├── file-graph.mmd               grafo completo, sem truncagem
-    ├── graph.json                   grafo em JSON para ferramentas externas
-    └── reading-the-map.md           leitura do grafo: hubs, camadas, ciclos
+└── 07-cartography/                  CODE CARTOGRAPHY
+    ├── file-graph.md                Mermaid graph: which file imports which
+    ├── module-graph.md              aggregated graph + coupling matrix
+    ├── modules/<module>.md          per-module detail (large repositories)
+    ├── file-graph.mmd               full graph, untruncated
+    ├── graph.json                   graph as JSON for external tooling
+    └── reading-the-map.md           reading the graph: hubs, layers, cycles
 ```
 
-Cada página tem um **outline obrigatório** — mesmas secções, mesma ordem, em qualquer
-repositório. É isso que torna a saída padronizada em vez de prosa livre.
+Every page has a **mandatory outline** — same headings, same order, in any repository.
+That is what makes the output standardized rather than free-form prose.
 
-Todas terminam com **"Gaps / Open questions"**: onde o modelo não conseguiu determinar
-algo a partir do código, tem de o dizer em vez de inventar.
+Every page ends with **"Gaps / Open questions"**: where the model could not determine
+something from the code, it has to say so instead of inventing.
 
 ### Obsidian
 
-A saída é um vault. Todos os links internos são wikilinks (`[[02-architecture/overview]]`),
-resolvidos a partir da raiz e sem extensão `.md`. Basta abrir a pasta no Obsidian —
-`README.md` é o índice, e o grafo do Obsidian dá uma segunda vista sobre a documentação.
+The output is a vault. All internal links are wikilinks
+(`[[02-architecture/overview]]`), resolved from the vault root and without the `.md`
+extension. Open the folder in Obsidian — `README.md` is the index, and Obsidian's graph
+view gives a second perspective on the documentation.
 
-Detalhes que só aparecem ao fazer isto a sério e que estão tratados: dentro de tabelas
-markdown o `|` do alias é escapado (`[[destino\|texto]]`), e caminhos de ficheiros de
-código continuam como código inline em vez de virarem links — não são notas.
+Two details that only show up when you do this for real, both handled: inside Markdown
+tables the alias pipe is escaped (`[[target\|text]]`), and source file paths stay as
+inline code rather than becoming links — they are not notes.
 
 ---
 
-## Cartografia do código
+## Code cartography
 
-O grafo de dependências é construído por **análise estática determinística**
-(`wiki_generator/cartography.py`), não pelo modelo — uma única aresta inventada
-destruiria a confiança no diagrama.
+The dependency graph is built by **deterministic static analysis**
+(`wiki_generator/cartography.py`), not by the model — a single invented edge would
+destroy trust in the diagram.
 
-Extrai `import` / `require` / `include` de Python, TypeScript/JavaScript, Go, Java,
-Kotlin, Rust, C/C++, Ruby, PHP, Dart e Shell, resolve cada especificador para um
-ficheiro real do repositório, e calcula:
+It extracts `import` / `require` / `include` statements from Python, TypeScript/JavaScript,
+Go, Java, Kotlin, Rust, C/C++, Ruby, PHP, Dart and Shell, resolves each specifier to a
+real file in the repository, and computes:
 
-- **hubs** — ficheiros com mais ligações (maior raio de impacto de uma alteração)
-- **entrypoints** — importam mas ninguém os importa
-- **ficheiros isolados** — sem ligações (código morto? carregamento dinâmico?)
-- **ciclos de dependência** — violações de camada
-- **acoplamento entre módulos**
+- **hubs** — files with the most connections (largest blast radius for a change)
+- **entrypoints** — they import, nothing imports them
+- **orphan files** — no edges at all (dead code? dynamic loading?)
+- **dependency cycles** — layering violations
+- **inter-module coupling**
 
-Linguagens presentes no repositório mas sem extrator (Swift, C#, Elixir, SQL,
-Terraform, …) são **assinaladas na página**: os seus ficheiros aparecem sem arestas, e a
-wiki diz explicitamente que isso é limitação da ferramenta e não código morto.
+Languages present in the repository but without an extractor (Swift, C#, Elixir, SQL,
+Terraform, …) are **flagged on the page**: their files appear with no edges, and the wiki
+states explicitly that this is a tool limitation, not dead code.
 
-### Cobertura total, páginas navegáveis
+### Full coverage, navigable pages
 
-O diagrama cobre **todos** os ficheiros. Acima de ~140 nós um diagrama único deixa de
-renderizar, por isso a cobertura é repartida sem ser reduzida:
+The diagram covers **every** file. Past ~140 nodes a single diagram stops rendering, so
+coverage is split rather than reduced:
 
-- `file-graph.md` — métricas, vista agregada por módulo, índice das páginas de módulo
-- `07-cartography/modules/<módulo>.md` — uma página por módulo, dividida em partes de
-  180 ficheiros quando necessário
-- `file-graph.mmd` / `graph.json` — o grafo integral, sem truncagem
+- `file-graph.md` — metrics, aggregated per-module view, index of the module pages
+- `07-cartography/modules/<module>.md` — one page per module, split into parts of 180
+  files when needed
+- `file-graph.mmd` / `graph.json` — the complete graph, untruncated
 
-**Navegação entre módulos.** No diagrama de cada módulo, ficheiros de outros módulos
-aparecem a tracejado e são clicáveis (`click` do Mermaid). Cada página tem ainda uma
-tabela *Módulos vizinhos* com o número de imports em cada direção. Dá para percorrer o
-grafo módulo a módulo em vez de olhar para um diagrama só.
+**Navigating between modules.** In each module's diagram, files from other modules are
+drawn dashed and are clickable (Mermaid `click`). Each page also carries a *neighbouring
+modules* table with the import count in each direction. You can walk the graph module by
+module instead of staring at one diagram.
 
-A metodologia está formalizada na skill reutilizável
+The methodology is formalized as a reusable skill in
 [`.claude/skills/code-cartography/SKILL.md`](.claude/skills/code-cartography/SKILL.md).
 
 ---
 
-## Verificações automáticas
+## Built-in verification
 
-Três verificações correm no fim de cada geração, todas determinísticas:
+Three checks run at the end of every generation, all deterministic:
 
-**Cobertura das páginas de referência.** Confirma que cada ficheiro do lote tem mesmo a
-sua secção. Se faltar algum, repete a chamada listando explicitamente o que ficou de
-fora; se ainda assim faltar, a página leva um aviso visível em vez de dar a omissão por
-documentada.
+**Reference page coverage.** Confirms every file in a batch actually got its own section.
+If one is missing, the call is repeated with an explicit list of what was left out; if it
+is still missing, the page carries a visible warning rather than passing the omission off
+as documented.
 
-**Wikilinks.** Um link partido aponta para uma nota que nunca vai existir. Links sem
-destino são degradados para texto simples e reportados. A verificação ignora blocos de
-código — `[[ -f x ]]` em bash não é um link. No fim há uma reverificação que lê de novo
-do disco, para apanhar o caso de algo ter escrito depois da correção.
+**Wikilinks.** A broken link points at a note that will never exist. Links without a
+target are downgraded to plain text and reported. The check ignores code blocks — `[[ -f
+x ]]` in bash is not a link. A final re-check reads from disk again, to catch anything
+that wrote after the fix.
 
-**Citações `ficheiro:linha`.** Cada citação é confrontada com o repositório e
-classificada como **inválida** (ficheiro não existe, ou linha para lá do fim) ou **mal
-enraizada** (o ficheiro existe, mas o caminho está relativo a um subdiretório). O que
-isto **não** apanha — e não finge apanhar — é a citação desalinhada dentro do ficheiro.
+**`file:line` citations.** Every citation is checked against the repository and
+classified as **invalid** (file does not exist, or line past EOF) or **unrooted** (the
+file exists, but the path is relative to a subdirectory). What this does **not** catch —
+and does not pretend to — is a citation that is in range but points at the wrong line.
 
 ---
 
-## Escolher o modelo
+## Choosing a model
 
-O default é `haiku` porque é barato e rápido. Mas numa auditoria real — 7 repositórios
-de um projeto de produção, 258 páginas, 440 afirmações confrontadas com o código por
-revisores independentes com refutação adversarial — a diferença entre modelos não foi de
-grau, foi de tipo.
+The default is `haiku` because it is cheap and fast. But in a real audit — 7 repositories
+from a production project, 258 pages, 440 claims checked against the code by independent
+reviewers with adversarial refutation — the difference between models was not one of
+degree, but of kind.
 
-Nas mesmas páginas analíticas, com prompts idênticos:
+On the same analytical pages, with identical prompts:
 
 | | haiku | sonnet |
 |---|---:|---:|
-| Erros factuais confirmados | 28 | **20** |
-| Taxa de erro | 1 em 15 afirmações | **1 em 25** |
-| Endpoints / dependências / ficheiros inventados | a maioria | **0** |
-| Erros de citação (linha errada) | poucos | quase todos |
+| Confirmed factual errors | 28 | **20** |
+| Error rate | 1 in 15 claims | **1 in 25** |
+| Invented endpoints / dependencies / files | most of them | **0** |
+| Citation errors (wrong line) | few | almost all |
 
-O `haiku` inventa **conteúdo**: endpoints REST plausíveis que não existem no router,
-dependências que não estão no manifesto, permissões que não estão no manifesto Android.
-Um leitor acredita e age em cima disso.
+`haiku` invents **content**: plausible REST endpoints that do not exist in the router,
+dependencies absent from the manifest, permissions absent from the Android manifest. A
+reader believes it and acts on it.
 
-O `sonnet` erra em **precisão de citação**: aponta `pubspec.yaml:62` quando é `:41`. O
-leitor não encontra o que lhe foi prometido, mas não fica a acreditar em algo falso.
+`sonnet` errs on **citation precision**: it points at `pubspec.yaml:62` when the truth is
+`:41`. The reader does not find what was promised, but is not left believing something
+false.
 
-Endurecer os prompts resolveu o padrão que foi mirado com precisão — exigir
-`ficheiro:linha` por linha nas tabelas de endpoints, e mandar ler onde o router é
-*montado* — e cortou os endpoints inventados em 67%. Não conseguiu mais: **os erros de
-conteúdo restantes são limite do modelo, não do prompt.** Exigir citações chegou a
-converter afirmações vagas e infalsificáveis em afirmações precisas e erradas.
+Hardening the prompts fixed the pattern it was aimed at — requiring `file:line` per row
+in endpoint tables, and instructing the model to read where the router is *mounted* — and
+cut invented endpoints by 67%. It could do no more: **the remaining content errors are a
+model limit, not a prompt limit.** Demanding citations even converted vague, unfalsifiable
+claims into precise, wrong ones.
 
-Recomendação prática — as páginas de referência e de módulo são transcrição mecânica e o
-`haiku` chega bem; as analíticas carregam as afirmações sobre as quais alguém vai decidir:
+Practical recommendation — reference and module pages are mechanical transcription and
+`haiku` handles them well; the analytical pages carry the claims someone will act on:
 
 ```bash
-wiki-generator --source . --model haiku                    # o grosso
+wiki-generator --source . --model haiku                    # the bulk
 
 wiki-generator --source . --model sonnet \
   --only overview.introduction --only overview.tech-stack \
   --only architecture.overview --only architecture.integrations \
-  --only operations.configuration                          # as que pesam
+  --only operations.configuration                          # the ones that matter
 ```
 
-Trata qualquer citação `ficheiro:linha` como ponteiro aproximado, em qualquer modelo: os
-números de linha desviam-se com a edição do código e nenhum modelo os acerta de forma
-fiável.
+Treat any `file:line` citation as an approximate pointer, on any model: line numbers
+drift as code is edited and no model gets them reliably right.
 
 ---
 
-## Referência de opções
+## Options reference
 
-### Alvo
+### Target
 
-| Flag | Default | Descrição |
+| Flag | Default | Description |
 |---|---|---|
-| `--source`, `-s` | `.` | Repositório, ou pasta com vários repositórios git |
-| `--output`, `-o` | `<repo>/wiki` | Pasta de saída; cada repo recebe `<output>/<nome>/` |
-| `--config`, `-c` | — | Ficheiro JSON de configuração |
+| `--source`, `-s` | `.` | Repository, or a folder containing several git repositories |
+| `--output`, `-o` | `<repo>/wiki` | Output folder; each repo gets `<output>/<name>/` |
+| `--config`, `-c` | — | JSON configuration file |
 
-`--repo`/`-r` e `--out` continuam a funcionar como aliases.
+`--repo`/`-r` and `--out` still work as aliases.
 
-### Modelo
+### Model
 
-| Flag | Default | Descrição |
+| Flag | Default | Description |
 |---|---|---|
-| `--model`, `-m` | `haiku` | Alias (`haiku`, `sonnet`, `opus`) ou nome completo |
-| `--fallback-model` | — | Modelo de recurso se o principal não estiver disponível |
-| `--concurrency`, `-j` | `4` | Páginas geradas em paralelo |
-| `--timeout` | `600` | Timeout por página, em segundos |
-| `--max-retries` | `2` | Tentativas extra em falhas transitórias |
-| `--permission-mode` | `bypassPermissions` | Modo de permissões do CLI |
-| `--claude-bin` | `claude` | Binário do Claude Code |
-| `--log-dir` | — | Guardar as chamadas ao Claude Code para debug |
+| `--model`, `-m` | `haiku` | Alias (`haiku`, `sonnet`, `opus`) or full model name |
+| `--fallback-model` | — | Fallback model when the primary is unavailable |
+| `--concurrency`, `-j` | `4` | Pages generated in parallel |
+| `--timeout` | `600` | Per-page timeout, in seconds |
+| `--max-retries` | `2` | Extra attempts on transient failures |
+| `--permission-mode` | `bypassPermissions` | Claude Code permission mode |
+| `--claude-bin` | `claude` | Claude Code binary |
+| `--log-dir` | — | Save Claude Code calls for debugging |
 
-### Conteúdo
+### Content
 
-| Flag | Default | Descrição |
+| Flag | Default | Description |
 |---|---|---|
 | `--language`, `-l` | `en` | `en`, `pt`, `pt-br`, `es`, `fr`, `de`, `it` |
-| `--project-name` | nome do diretório | Nome do projeto na wiki |
-| `--audience` | engenheiros do repositório | Público-alvo da documentação |
+| `--project-name` | directory name | Project name shown in the wiki |
+| `--audience` | repository engineers | Target audience for the documentation |
 
-### Estrutura
+### Structure
 
-| Flag | Default | Descrição |
+| Flag | Default | Description |
 |---|---|---|
-| `--module-depth` | `2` | Profundidade de diretórios ao agrupar módulos |
-| `--max-modules` | `25` | Tecto de módulos documentados |
-| `--files-per-reference-page` | `6` | Ficheiros por página de referência |
-| `--max-reference-pages` | `60` | Tecto de páginas de referência |
-| `--no-reference` | — | Saltar a referência de baixo nível |
-| `--no-cartography` | — | Saltar o grafo de dependências |
-| `--single` | — | Tratar a árvore toda como um só repositório |
-| `--include` / `--exclude` | — | Globs de ficheiros (repetíveis) |
+| `--module-depth` | `2` | Directory depth used to group modules |
+| `--max-modules` | `25` | Cap on documented modules |
+| `--files-per-reference-page` | `6` | Files per reference page |
+| `--max-reference-pages` | `60` | Cap on reference pages |
+| `--no-reference` | — | Skip the low-level reference |
+| `--no-cartography` | — | Skip the dependency graph |
+| `--single` | — | Treat the whole tree as a single repository |
+| `--include` / `--exclude` | — | File globs (repeatable) |
 
-### Comportamento
+### Behaviour
 
-| Flag | Descrição |
+| Flag | Description |
 |---|---|
-| `--force`, `-f` | Ignorar a cache |
-| `--dry-run` | Mostrar o plano e sair |
-| `--only` | Chave, prefixo ou tipo de página (repetível) |
-| `--verbose`, `-v` | Reportar também o arranque de cada página |
+| `--force`, `-f` | Ignore the cache |
+| `--dry-run` | Print the plan and exit |
+| `--only` | Page key, prefix or type (repeatable) |
+| `--verbose`, `-v` | Also report each page as it starts |
 
 ---
 
-## Como funciona
+## How it works
 
-1. **Scan** (`scanner.py`) — percorre o repositório respeitando o `.gitignore` (via
-   `git ls-files`), classifica ficheiros por linguagem e agrupa-os em módulos. Sem modelo.
-2. **Cartografia** (`cartography.py`) — grafo de dependências ficheiro-a-ficheiro por
-   análise estática. Sem modelo.
-3. **Plano** (`planner.py`) — a estrutura fixa vira uma lista de páginas, cada uma com o
-   seu prompt e o seu conjunto de ficheiros de origem.
-4. **Geração** (`generator.py`) — cada página é um `claude -p` isolado, com apenas
-   `Read`/`Glob`/`Grep` disponíveis. O modelo lê o código real em vez de o receber no
-   prompt, o que mantém o custo por página baixo mesmo em repositórios grandes.
-5. **Montagem e verificação** (`assembler.py`, `links.py`, `citations.py`) — índice,
-   sumário, validação de links e de citações.
+1. **Scan** (`scanner.py`) — walks the repository honouring `.gitignore` (via
+   `git ls-files`), classifies files by language and groups them into modules. No model.
+2. **Cartography** (`cartography.py`) — file-to-file dependency graph by static analysis.
+   No model.
+3. **Plan** (`planner.py`) — the fixed structure becomes a list of pages, each with its
+   own prompt and its own set of source files.
+4. **Generation** (`generator.py`) — each page is an isolated `claude -p` run with only
+   `Read`/`Glob`/`Grep` available. The model reads the real code instead of receiving it
+   in the prompt, which keeps per-page cost low even on large repositories.
+5. **Assembly and verification** (`assembler.py`, `links.py`, `citations.py`) — index,
+   summary, link validation and citation validation.
 
-Zero dependências além da biblioteca padrão do Python.
+Zero dependencies beyond the Python standard library.
 
-### Segurança
+### Security
 
-Ficheiros com aspeto de credenciais (`*service-account*.json`, `*-adminsdk-*.json`,
-`*.pem`, `.env`, chaves SSH, …) são **excluídos do scan por omissão e reportados**, não
-silenciados — o gerador dá a um modelo acesso de leitura ao repositório e escreve
-documentação a partir dele, por isso nada deve apontar para segredos. `.env.example` e
-afins continuam incluídos: são documentação de configuração, não segredos.
-
----
-
-## Limitações
-
-- A saída é gerada por um modelo. É um **mapa útil, não a fonte de verdade** — o código
-  é que manda. As páginas de cartografia são a exceção: são determinísticas.
-- Namespaces C#, aliases de bundler (`@/components`) e injeção de dependências não
-  produzem arestas fiáveis; aparecem como não resolvidos em vez de arestas inventadas.
-- Pacotes Go são diretórios, não ficheiros: um import liga ao ficheiro representativo.
-- Não requer API key, mas consome a quota da tua subscrição do Claude Code.
+Files that look like credentials (`*service-account*.json`, `*-adminsdk-*.json`, `*.pem`,
+`.env`, SSH keys, …) are **excluded from the scan by default and reported**, not silently
+dropped — the generator gives a model read access to the repository and writes
+documentation from it, so nothing should point at secrets. `.env.example` and friends stay
+included: they are configuration documentation, not secrets.
 
 ---
 
-## Licença
+## Limitations
+
+- The output is model-generated. It is a **useful map, not the source of truth** — the
+  code is. The cartography pages are the exception: they are deterministic.
+- C# namespaces, bundler aliases (`@/components`) and dependency injection do not yield
+  reliable edges; they show up as unresolved rather than as invented edges.
+- Go packages are directories, not files: an import links to a representative file.
+- No API key required, but it consumes your Claude Code subscription quota.
+
+> The CLI output, `--help` text and source comments are currently in Portuguese. Only the
+> generated wiki content follows `--language`.
+
+---
+
+## License
 
 MIT
