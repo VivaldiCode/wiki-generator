@@ -1,0 +1,12 @@
+{
+  "repo_path": ".",
+  "output_path": "./wiki",
+  "model": "haiku",
+  "language": "pt",
+  "concurrency": 6,
+  "module_depth": 2,
+  "max_modules": 20,
+  "files_per_reference_page": 12,
+  "include_reference": true,
+  "exclude_globs": ["**/generated/**", "**/*.pb.go", "**/migrations/**"]
+}

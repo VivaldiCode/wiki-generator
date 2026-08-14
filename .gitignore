@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+
+# Saida do proprio gerador
+wiki/
+.wiki-manifest.json
+
+# Logs de debug (--log-dir): contem os prompts completos
+wg-logs/
+*.log
+
+# Local, nao partilhavel
+.claude/settings.local.json
+.DS_Store
+.idea/
+.vscode/
