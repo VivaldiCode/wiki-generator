@@ -123,9 +123,14 @@ class ClaudeRunner:
                 timeout=self.config.timeout,
             )
         except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
+            await _terminate(process)
             raise ClaudeError(f"Timed out after {self.config.timeout}s") from None
+        except asyncio.CancelledError:
+            # The run is being torn down (Ctrl-C, a failure elsewhere). Without
+            # this the CLI child keeps running detached, burning quota against a
+            # wiki that is about to be rolled back.
+            await _terminate(process)
+            raise
 
         stdout_text = stdout.decode("utf-8", "replace")
         stderr_text = stderr.decode("utf-8", "replace").strip()
@@ -182,6 +187,21 @@ class ClaudeRunner:
 
 
 # ----------------------------------------------------------------------
+async def _terminate(process: asyncio.subprocess.Process) -> None:
+    """Stop a child CLI process, escalating to SIGKILL if it ignores SIGTERM."""
+    if process.returncode is not None:
+        return
+    try:
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+    except ProcessLookupError:
+        pass
+
+
 def _parse_json_output(raw: str) -> ClaudeResponse:
     raw = raw.strip()
     if not raw:

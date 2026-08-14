@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .journal import iter_pages
+
 WIKILINK = re.compile(r"\[\[([^\]\[]+)\]\]")
 FENCED_BLOCK = re.compile(r"```.*?```", re.S)
 INLINE_CODE = re.compile(r"`[^`\n]*`")
@@ -29,7 +31,7 @@ def _mask_code(text: str) -> str:
 def collect_notes(wiki_root: Path) -> tuple[set[str], dict[str, list[str]]]:
     """Existing notes: by path from the root, and by file name."""
     paths = {
-        str(p.relative_to(wiki_root).as_posix())[:-3] for p in wiki_root.rglob("*.md")
+        str(p.relative_to(wiki_root).as_posix())[:-3] for p in iter_pages(wiki_root)
     }
     by_name: dict[str, list[str]] = {}
     for path in paths:
@@ -54,7 +56,7 @@ def validate_and_fix(wiki_root: Path, *, fix: bool = True) -> dict:
     checked = 0
     broken: list[tuple[str, str]] = []
 
-    for page in sorted(wiki_root.rglob("*.md")):
+    for page in iter_pages(wiki_root):
         text = page.read_text(encoding="utf-8")
         masked = _mask_code(text)
         replacements: list[tuple[int, int, str]] = []

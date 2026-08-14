@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import signal
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -18,7 +19,8 @@ from .citations import check as check_citations, format_report
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
-from .scanner import find_repositories, scan_repo
+from .journal import RunJournal
+from .scanner import count_repo_files, find_repositories, scan_repo
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -111,6 +113,10 @@ def build_parser() -> argparse.ArgumentParser:
     behaviour.add_argument("--only", action="append", default=None, metavar="TARGET",
                            help="Generate only these pages: key (`architecture.overview`), "
                                 "prefix (`architecture`) or type (`module`). Repeatable.")
+    behaviour.add_argument("--no-rollback", action="store_true",
+                           help="Keep the partial output of an interrupted previous run "
+                                "instead of rolling it back (default: roll back, so a "
+                                "wiki is never left half-generated).")
     behaviour.add_argument("--verbose", "-v", action="store_true", help="Verbose output.")
     behaviour.add_argument("--version", action="version", version=f"wiki-generator {__version__}")
 
@@ -162,6 +168,7 @@ def _config_from_args(args: argparse.Namespace) -> WikiConfig:
     config.verbose = args.verbose
     config.extra["cartography"] = not args.no_cartography
     config.extra["single"] = args.single
+    config.extra["rollback"] = not args.no_rollback
     config.extra["output_root"] = str(explicit_output) if explicit_output else None
     return config
 
@@ -219,6 +226,12 @@ def _plan_targets(config: WikiConfig) -> list[WikiConfig]:
     if len(repos) <= 1:
         return [config]
 
+    # Smallest repositories first. A long multi-repo run is far more useful when
+    # the quick wins land early: you get complete wikis to look at within minutes,
+    # and if the run is cut short the casualty is the one repo that was going to
+    # take longest anyway.
+    repos.sort(key=lambda repo: (count_repo_files(repo), repo.name))
+
     output_root = config.extra.get("output_root")
     targets: list[WikiConfig] = []
     for repo in repos:
@@ -241,7 +254,12 @@ async def run_all(config: WikiConfig) -> int:
     if len(targets) > 1:
         print(f"Found {len(targets)} git repositories in {config.repo_path}:", flush=True)
         for target in targets:
-            print(f"  - {target.repo_path.name:<24} -> {target.output_path}", flush=True)
+            count = count_repo_files(target.repo_path)
+            print(
+                f"  - {target.repo_path.name:<24} {count:>6} files -> {target.output_path}",
+                flush=True,
+            )
+        print("Smallest first, so complete wikis appear early.", flush=True)
         print("One wiki per repository. Use --single to generate a single one.\n", flush=True)
 
     exit_code = 0
@@ -263,6 +281,32 @@ async def run(config: WikiConfig) -> int:
     print(f"Output:     {config.output_path}", flush=True)
     print(f"Model:      {config.model}  (concurrency {config.concurrency})", flush=True)
     print()
+
+    # A marker left behind means the previous run died mid-way. Restore the wiki
+    # to what it was before that run, so generation always starts from a coherent
+    # state rather than compounding a half-written one.
+    journal = RunJournal(config.output_path)
+    pending = journal.pending()
+    if pending:
+        if config.extra.get("rollback", True):
+            recovery = journal.recover()
+            detail = (
+                f"{recovery.restored_files} files restored, "
+                f"{recovery.removed_files} removed"
+                if recovery.wiki_existed
+                else "the wiki did not exist before, so it was removed"
+            )
+            print(
+                f"! Previous run (started {pending.get('started_at', '?')}) did not "
+                f"finish. Rolled back: {detail}.",
+                flush=True,
+            )
+        else:
+            print(
+                f"! Previous run (started {pending.get('started_at', '?')}) did not "
+                "finish. Keeping the partial output (--no-rollback).",
+                flush=True,
+            )
 
     print("Scanning repository...", flush=True)
     scan = scan_repo(config)
@@ -310,7 +354,22 @@ async def run(config: WikiConfig) -> int:
     config.output_path.mkdir(parents=True, exist_ok=True)
 
     generator = WikiGenerator(config, scan)
-    report = await generator.generate(specs)
+    journal.begin({"model": config.model, "language": config.language,
+                   "pages": len(specs), "repo": config.repo_path.name})
+    try:
+        report = await generator.generate(specs)
+    except BaseException:
+        # Includes KeyboardInterrupt: an interrupted run must not leave a wiki
+        # whose index, cartography and pages disagree with each other.
+        recovery = journal.abort()
+        if recovery.recovered:
+            print(
+                f"\nRun interrupted — wiki rolled back to its previous state "
+                f"({recovery.restored_files} files restored, "
+                f"{recovery.removed_files} removed).",
+                file=sys.stderr,
+            )
+        raise
 
     # The index must list the whole wiki, not just what this run generated:
     # with --only, building it from the subset would drop every other page.
@@ -373,6 +432,10 @@ async def run(config: WikiConfig) -> int:
         print(f"Cost:      ${report.total_cost_usd:.4f}")
     print(f"\nWiki at: {nav_files[0]}")
 
+    # Only now is the wiki coherent: pages, cartography, index and validation all
+    # done. Committing drops the snapshot and clears the interrupted-run marker.
+    journal.commit()
+
     return 1 if report.failed else 0
 
 
@@ -390,6 +453,17 @@ def main(argv: list[str] | None = None) -> int:
         except ClaudeError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
+
+    # `kill <pid>` should unwind exactly like Ctrl-C: stop the children and roll
+    # back. Without this, SIGTERM kills the process outright and leaves the
+    # interrupted-run marker for the next run to clean up.
+    def _on_terminate(signum, frame):
+        raise KeyboardInterrupt
+
+    try:
+        signal.signal(signal.SIGTERM, _on_terminate)
+    except (ValueError, OSError):
+        pass  # not the main thread, or a platform without SIGTERM
 
     try:
         return asyncio.run(run_all(config))

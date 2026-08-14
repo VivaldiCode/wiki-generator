@@ -92,6 +92,10 @@ Found 4 git repositories in /Users/me/code:
 One wiki per repository. Use --single to generate a single one.
 ```
 
+Repositories are processed **smallest first**, by file count. A long multi-repo run is
+far more useful when the quick wins land early: complete wikis appear within minutes, and
+if the run is cut short the casualty is the one repo that was going to take longest anyway.
+
 Without `--output`, each wiki is written inside its own repository (`<repo>/wiki/`).
 
 To treat the whole tree as **one** project (a monorepo without separate git sub-repos),
@@ -129,7 +133,31 @@ Plan: 44 model-generated pages
 
 Use `--verbose` to also see each page as it starts.
 
-### 6. Incremental regeneration
+### 6. Interrupted runs roll back
+
+A run that dies halfway — Ctrl-C, a crash, a closed laptop — would leave a wiki whose
+index, cartography and pages disagree with each other. That half-state is worse than no
+wiki, because nothing about it says it is half: the pages that did land look finished.
+
+So generation is transactional, per repository. Before touching anything the current wiki
+is copied aside and a marker is written; the marker is only cleared on a clean finish.
+Finding one at startup is proof the previous run did not complete, and the snapshot is
+restored:
+
+```
+! Previous run (started 2026-08-14T10:28:52Z) did not finish.
+  Rolled back: 5 files restored, 5 removed.
+```
+
+Ctrl-C and `kill` roll back in-process and stop the Claude Code children immediately. A
+`kill -9` cannot be caught, so the marker is found and honoured on the next run instead.
+
+In a multi-repo run the granularity is one repository: a crash on the fourth rolls back
+the fourth only — the three already committed are complete and correct, and stay.
+
+Use `--no-rollback` to keep a partial run's output and continue from it incrementally.
+
+### 7. Incremental regeneration
 
 Every page stores a fingerprint of the source files it was built from, in
 `.wiki-manifest.json`. On a second run, only pages whose source files changed are
@@ -143,7 +171,7 @@ wiki-generator --source ~/code/my-project --force # ignore the cache
 Changing the model, the language or the wiki structure also invalidates the cache
 automatically.
 
-### 7. Regenerate only part of it
+### 8. Regenerate only part of it
 
 ```bash
 # one specific page
@@ -158,7 +186,7 @@ wiki-generator --source . --only module --only reference
 
 The index still lists the whole wiki, not just what was regenerated.
 
-### 8. Save logs for debugging
+### 9. Save logs for debugging
 
 ```bash
 wiki-generator --source ~/code/my-project --log-dir /tmp/wg-logs
@@ -171,7 +199,7 @@ suffix. When a page comes out wrong, this is where you find out why.
 > Logs contain the full prompt, which includes manifest excerpts and your repository's
 > file tree. Treat the log folder with the same care as the code.
 
-### 9. Large repositories
+### 10. Large repositories
 
 ```bash
 wiki-generator --source . \
@@ -181,7 +209,7 @@ wiki-generator --source . \
   --exclude '**/*.pb.go'
 ```
 
-### 10. Language
+### 11. Language
 
 The wiki content language is configurable:
 
@@ -189,7 +217,7 @@ The wiki content language is configurable:
 wiki-generator --source . --language pt     # en (default), pt, pt-br, es, fr, de, it
 ```
 
-### 11. Configuration file
+### 12. Configuration file
 
 ```bash
 wiki-generator --config wiki.config.json
@@ -439,6 +467,7 @@ drift as code is edited and no model gets them reliably right.
 | `--force`, `-f` | Ignore the cache |
 | `--dry-run` | Print the plan and exit |
 | `--only` | Page key, prefix or type (repeatable) |
+| `--no-rollback` | Keep an interrupted run's partial output instead of rolling it back |
 | `--verbose`, `-v` | Also report each page as it starts |
 
 ---

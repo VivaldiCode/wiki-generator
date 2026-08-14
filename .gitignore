@@ -11,6 +11,8 @@ venv/
 # Saida do proprio gerador
 wiki/
 .wiki-manifest.json
+.wiki-run.json
+.wiki-backup/
 
 # Logs de debug (--log-dir): contem os prompts completos
 wg-logs/

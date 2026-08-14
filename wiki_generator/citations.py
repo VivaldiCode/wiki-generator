@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .journal import iter_pages
+
 # `path/file.ext:123` inside inline code, which is how the prompts instruct
 # references to be written.
 CITATION = re.compile(r"`([\w./\-]+\.[A-Za-z0-9]{1,10}):(\d+)(?:-(\d+))?`")
@@ -67,7 +69,7 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
     missing_file: list[tuple[str, str]] = []
     out_of_range: list[tuple[str, str, int, int]] = []
 
-    for page in sorted(wiki_root.rglob("*.md")):
+    for page in iter_pages(wiki_root):
         page_rel = str(page.relative_to(wiki_root))
         for match in CITATION.finditer(page.read_text(encoding="utf-8")):
             rel, start, end = match.group(1), int(match.group(2)), match.group(3)

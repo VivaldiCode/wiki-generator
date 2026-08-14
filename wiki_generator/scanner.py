@@ -156,6 +156,32 @@ def find_repositories(root: Path, max_depth: int = 3) -> list[Path]:
     return found
 
 
+def count_repo_files(repo: Path, cap: int = 20_000) -> int:
+    """Cheap file count for a repository, used to order a multi-repo run.
+
+    Uses `git ls-files` when available because it is near-instant and already
+    honours `.gitignore`; falls back to a bounded walk so a repository without
+    git — or with a broken index — still gets a usable number instead of zero.
+    """
+    listing = _git_files(repo)
+    if listing is not None:
+        return sum(
+            1 for rel in listing
+            if not any(part in IGNORE_DIRS for part in rel.split("/")[:-1])
+        )
+
+    count = 0
+    for path in repo.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in IGNORE_DIRS for part in path.relative_to(repo).parts[:-1]):
+            continue
+        count += 1
+        if count >= cap:
+            break
+    return count
+
+
 def _git_files(repo: Path) -> list[str] | None:
     """List files via git (honours .gitignore). None if this is not a git repo."""
     try:
