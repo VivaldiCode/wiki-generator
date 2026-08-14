@@ -58,6 +58,46 @@ STRINGS: dict[str, dict[str, str]] = {
         "sec.guides": "5. Guides",
         "sec.operations": "6. Operations",
         "sec.cartography": "7. Code Cartography",
+        "sec.verification": "8. Verification",
+        # --- verification report ---
+        "verify.title": "Verification Report",
+        "verify.intro": (
+            "Claims made by this wiki, checked against the source code by an "
+            "independent reviewer ({model}) and then challenged by an adversarial "
+            "pass. Only findings that survived the challenge are listed."
+        ),
+        "verify.m.pages": "Pages verified",
+        "verify.m.findings": "Surviving findings",
+        "verify.m.overturned": "Findings overturned on challenge",
+        "verify.m.model": "Verifier model",
+        "verify.m.claims": "Claims extracted",
+        "verify.m.unanswered": "Claims left unanswered",
+        "verify.m.rejected": "Contradictions dropped for unusable evidence",
+        "verify.none": "No contradicted claims found on the verified pages.",
+        "verify.nothing": (
+            "**Nothing was verified.** Every page in scope failed or was skipped, so "
+            "this report says nothing about the wiki's accuracy."
+        ),
+        "verify.partial": (
+            "> **Partial:** the budget or an error stopped verification early. "
+            "Not checked: {pages}"
+        ),
+        "verify.incomplete": (
+            "> **Incomplete:** {count} claim(s) were never answered by a checker. "
+            "This report covers the rest."
+        ),
+        "verify.f.claim": "The wiki says",
+        "verify.f.reality": "The code shows",
+        "verify.f.evidence": "Evidence",
+        "verify.f.absent": "`{path}` does not exist in the repository.",
+        "verify.stamp": (
+            "<sub>Computed against wiki state `{stamp}`. Regenerate the pages and "
+            "this report no longer describes them.</sub>"
+        ),
+        "verify.disclaimer": (
+            "<sub>Findings are model-generated and were required to cite a file and "
+            "line that resolves. Confirm against the code before acting.</sub>"
+        ),
         # --- index ---
         "index.title": "Wiki — {project}",
         "index.subtitle": "Documentation generated automatically from the source code.",
@@ -253,6 +293,46 @@ STRINGS: dict[str, dict[str, str]] = {
         "sec.guides": "5. Guias",
         "sec.operations": "6. Operacao",
         "sec.cartography": "7. Cartografia do Codigo",
+        "sec.verification": "8. Verificacao",
+        "verify.title": "Relatorio de Verificacao",
+        "verify.intro": (
+            "Afirmacoes desta wiki confrontadas com o codigo-fonte por um revisor "
+            "independente ({model}) e depois contestadas por uma passagem "
+            "adversarial. So constam os achados que sobreviveram a contestacao."
+        ),
+        "verify.m.pages": "Paginas verificadas",
+        "verify.m.findings": "Achados que sobreviveram",
+        "verify.m.overturned": "Achados derrubados na contestacao",
+        "verify.m.model": "Modelo verificador",
+        "verify.m.claims": "Afirmacoes extraidas",
+        "verify.m.unanswered": "Afirmacoes sem resposta",
+        "verify.m.rejected": "Contradicoes descartadas por evidencia inutilizavel",
+        "verify.none": "Nenhuma afirmacao contrariada nas paginas verificadas.",
+        "verify.nothing": (
+            "**Nao foi verificado nada.** Todas as paginas do ambito falharam ou "
+            "foram ignoradas, portanto este relatorio nada diz sobre a exatidao "
+            "da wiki."
+        ),
+        "verify.partial": (
+            "> **Parcial:** o orcamento ou um erro interromperam a verificacao. "
+            "Nao verificadas: {pages}"
+        ),
+        "verify.incomplete": (
+            "> **Incompleto:** {count} afirmacao(oes) ficaram sem resposta de um "
+            "verificador. Este relatorio cobre as restantes."
+        ),
+        "verify.f.claim": "A wiki diz",
+        "verify.f.reality": "O codigo mostra",
+        "verify.f.evidence": "Evidencia",
+        "verify.f.absent": "`{path}` nao existe no repositorio.",
+        "verify.stamp": (
+            "<sub>Calculado sobre o estado `{stamp}` da wiki. Se regerares as "
+            "paginas, este relatorio deixa de as descrever.</sub>"
+        ),
+        "verify.disclaimer": (
+            "<sub>Os achados sao gerados por modelo e obrigados a citar um ficheiro "
+            "e linha que resolvem. Confirma no codigo antes de agir.</sub>"
+        ),
         "index.title": "Wiki — {project}",
         "index.subtitle": "Documentacao gerada automaticamente a partir do codigo-fonte.",
         "index.repository": "Repositorio",

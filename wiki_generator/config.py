@@ -44,6 +44,16 @@ class WikiConfig:
     # Below this, a repository is skipped: a wiki built from a one-line
     # README is 20 pages of "Gaps / Open questions" and no information.
     min_lines: int = 50
+
+    # --- semantic verification (opt-in) ---
+    verify: bool = False
+    verify_scope: str = "analytical"
+    verify_model: str = "sonnet"          # haiku is what produces the errors
+    verify_concurrency: int = 2           # real parallelism is this x CLAIMS_PER_BATCH
+    verify_max_usd: float = 5.0           # per repository; 0 disables the ceiling
+    verify_total_usd: float = 25.0        # across every repository of one run
+    verify_timeout: int = 1800            # a batch fan-out exceeds the 600s default
+    verify_fail_on: str = "none"          # none | any | high
     include_reference: bool = True
     include_globs: tuple[str, ...] = ()
     exclude_globs: tuple[str, ...] = ()

@@ -21,6 +21,23 @@ class ClaudeError(RuntimeError):
 
 
 @dataclass
+class CallOptions:
+    """Per-call overrides. Anything left None falls back to the run configuration.
+
+    Verification needs a different model, an extra tool, subagent definitions and a
+    much longer timeout than page generation — but it must share the runner, because
+    the semaphore and the cost counter are per-instance. Two runners would double the
+    real concurrency and split the reported cost in half.
+    """
+
+    model: str | None = None
+    tools: tuple[str, ...] | None = None
+    agents_json: str | None = None
+    json_schema: str | None = None
+    timeout: int | None = None
+
+
+@dataclass
 class ClaudeResponse:
     text: str
     cost_usd: float = 0.0
@@ -50,18 +67,23 @@ class ClaudeRunner:
         self.total_calls = 0
 
     # ------------------------------------------------------------------
-    def _build_argv(self, system_prompt: str) -> list[str]:
+    def _build_argv(self, system_prompt: str, options: CallOptions) -> list[str]:
         config = self.config
+        tools = options.tools if options.tools is not None else config.tools
         argv = [
             self.binary,
             "--print",
             "--output-format", "json",
-            "--model", config.model,
+            "--model", options.model or config.model,
             "--permission-mode", config.permission_mode,
             "--no-session-persistence",
         ]
-        if config.tools:
-            argv += ["--tools", ",".join(config.tools)]
+        if tools:
+            argv += ["--tools", ",".join(tools)]
+        if options.agents_json:
+            argv += ["--agents", options.agents_json]
+        if options.json_schema:
+            argv += ["--json-schema", options.json_schema]
         if system_prompt:
             argv += ["--append-system-prompt", system_prompt]
         if config.fallback_model:
@@ -81,7 +103,11 @@ class ClaudeRunner:
 
     # ------------------------------------------------------------------
     async def run(
-        self, prompt: str, system_prompt: str = "", log_name: str | None = None
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        log_name: str | None = None,
+        options: CallOptions | None = None,
     ) -> ClaudeResponse:
         """Run a prompt and return the final text. Retries on transient failures."""
         last_error: Exception | None = None
@@ -91,7 +117,8 @@ class ClaudeRunner:
             try:
                 async with self._semaphore:
                     return await self._run_once(
-                        prompt, system_prompt, log_name, attempt
+                        prompt, system_prompt, log_name, attempt,
+                        options or CallOptions(),
                     )
             except ClaudeError as exc:
                 last_error = exc
@@ -107,8 +134,10 @@ class ClaudeRunner:
         system_prompt: str,
         log_name: str | None = None,
         attempt: int = 0,
+        options: CallOptions | None = None,
     ) -> ClaudeResponse:
-        argv = self._build_argv(system_prompt)
+        options = options or CallOptions()
+        argv = self._build_argv(system_prompt, options)
         process = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE,
@@ -120,11 +149,13 @@ class ClaudeRunner:
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(prompt.encode("utf-8")),
-                timeout=self.config.timeout,
+                timeout=options.timeout or self.config.timeout,
             )
         except asyncio.TimeoutError:
             await _terminate(process)
-            raise ClaudeError(f"Timed out after {self.config.timeout}s") from None
+            raise ClaudeError(
+                f"Timed out after {options.timeout or self.config.timeout}s"
+            ) from None
         except asyncio.CancelledError:
             # The run is being torn down (Ctrl-C, a failure elsewhere). Without
             # this the CLI child keeps running detached, burning quota against a
@@ -225,6 +256,10 @@ def _parse_json_output(raw: str) -> ClaudeResponse:
         raise ClaudeError(f"Error reported by the CLI: {payload.get('result', payload)}")
 
     text = payload.get("result") if isinstance(payload, dict) else None
+    # Under --json-schema the CLI returns a JSON *string* today, but a future
+    # version returning a parsed object must not hard-fail with a misleading error.
+    if isinstance(text, (dict, list)):
+        text = json.dumps(text, ensure_ascii=False)
     if not isinstance(text, str) or not text.strip():
         raise ClaudeError("Response has no usable 'result' field.")
 
@@ -238,7 +273,11 @@ def _parse_json_output(raw: str) -> ClaudeResponse:
 
 
 _RETRYABLE_MARKERS = (
-    "timeout", "overloaded", "rate limit", "rate_limit", "529", "503", "502",
+    # "timed out" as well as "timeout": this module raises "Timed out after Ns",
+    # which does not contain "timeout" — without both, every timeout was treated
+    # as permanent and re-raised on the first attempt.
+    "timeout", "timed out", "overloaded", "rate limit", "rate_limit", "429",
+    "usage limit", "quota", "529", "503", "502",
     "connection", "temporarily", "econnreset", "socket hang up",
 )
 

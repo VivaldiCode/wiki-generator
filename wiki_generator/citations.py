@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 from .journal import iter_pages
+from .links import mask_fences
 
 # `path/file.ext:123` inside inline code, which is how the prompts instruct
 # references to be written.
@@ -71,7 +72,13 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
 
     for page in iter_pages(wiki_root):
         page_rel = str(page.relative_to(wiki_root))
-        for match in CITATION.finditer(page.read_text(encoding="utf-8")):
+        # The verification report quotes invalid citations on purpose; counting
+        # them here would make the invalid total grow with every error found.
+        if page_rel.startswith("08-verification/"):
+            continue
+        # Citations inside fenced examples are illustrations, not claims about
+        # this repository — counting them inflates the invalid total.
+        for match in CITATION.finditer(mask_fences(page.read_text(encoding="utf-8"))):
             rel, start, end = match.group(1), int(match.group(2)), match.group(3)
             # Only counts as a citation if the path exists in the repository or
             # looks like a code path — avoids matching `version:1.2` and similar.

@@ -27,9 +27,11 @@ from pathlib import Path
 # survives a reboot. Every reader of the wiki must skip them — see EXCLUDED_DIRS.
 STATE_FILE = ".wiki-run.json"
 BACKUP_DIR = ".wiki-backup"
+# Verification findings: machine-readable, not wiki pages.
+FINDINGS_DIR = ".wiki-verify"
 
 # Directories inside a wiki that are bookkeeping, not content.
-EXCLUDED_DIRS = frozenset({BACKUP_DIR})
+EXCLUDED_DIRS = frozenset({BACKUP_DIR, FINDINGS_DIR})
 
 
 def is_internal(path: Path, wiki_root: Path) -> bool:

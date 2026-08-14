@@ -12,14 +12,16 @@ from pathlib import Path
 from . import __version__
 from .assembler import assemble
 from .cartography import build_graph, graph_context, write_cartography
-from .claude_client import ClaudeError, ensure_cli_available
+from .claude_client import ClaudeError, ClaudeRunner, ensure_cli_available
 from .config import DEFAULT_MODEL, WikiConfig
 from .generator import WikiGenerator
 from .citations import check as check_citations, format_report
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
+from .i18n import translator
 from .journal import RunJournal
+from . import verify as verify_mod
 from .scanner import (
     EmptyRepositoryError,
     count_repo_files,
@@ -115,6 +117,34 @@ def build_parser() -> argparse.ArgumentParser:
     structure.add_argument("--exclude", action="append", default=None, metavar="GLOB",
                            help="Exclude files matching this glob (repeatable).")
 
+    verification = parser.add_argument_group("verification (opt-in)")
+    verification.add_argument("--verify", action="store_true",
+                              help="After generating, check the wiki's factual claims "
+                                   "against the code using subagents. Slow and costly; "
+                                   "off by default.")
+    verification.add_argument("--verify-scope", default=None,
+                              choices=["analytical", "all"],
+                              help="Which pages to verify (default: analytical — the 5 "
+                                   "pages carrying claims someone acts on).")
+    verification.add_argument("--verify-model", default=None,
+                              help="Model for verification (default: sonnet).")
+    verification.add_argument("--verify-concurrency", type=int, default=None,
+                              help="Claim batches in flight (default: 2). Real "
+                                   "parallelism is this times 8 subagents.")
+    verification.add_argument("--verify-max-usd", type=float, default=None,
+                              help="Per-repository verification budget (default: 5.0; "
+                                   "0 disables the ceiling).")
+    verification.add_argument("--verify-total-usd", type=float, default=None,
+                              help="Verification budget across every repository of "
+                                   "the run (default: 25.0; 0 disables it). Without "
+                                   "it, --source over 20 repos costs 20 times the "
+                                   "per-repository ceiling.")
+    verification.add_argument("--verify-timeout", type=int, default=None,
+                              help="Per-call timeout for verification (default: 1800).")
+    verification.add_argument("--verify-fail-on", default=None,
+                              choices=["none", "any", "high"],
+                              help="Exit 4 when findings survive (default: none).")
+
     behaviour = parser.add_argument_group("behaviour")
     behaviour.add_argument("--force", "-f", action="store_true",
                            help="Regenerate every page, ignoring the cache.")
@@ -161,6 +191,13 @@ def _config_from_args(args: argparse.Namespace) -> WikiConfig:
         "files_per_reference_page": args.files_per_reference_page,
         "max_reference_pages": args.max_reference_pages,
         "min_lines": args.min_lines,
+        "verify_scope": args.verify_scope,
+        "verify_model": args.verify_model,
+        "verify_concurrency": args.verify_concurrency,
+        "verify_max_usd": args.verify_max_usd,
+        "verify_total_usd": args.verify_total_usd,
+        "verify_timeout": args.verify_timeout,
+        "verify_fail_on": args.verify_fail_on,
         "include_globs": tuple(args.include) if args.include else None,
         "exclude_globs": tuple(args.exclude) if args.exclude else None,
         "only": tuple(args.only) if args.only else None,
@@ -174,6 +211,7 @@ def _config_from_args(args: argparse.Namespace) -> WikiConfig:
 
     if args.no_reference:
         config.include_reference = False
+    config.verify = args.verify
     config.force = args.force
     config.dry_run = args.dry_run
     config.verbose = args.verbose
@@ -275,13 +313,16 @@ async def run_all(config: WikiConfig) -> int:
 
     exit_code = 0
     skipped: list[tuple[str, str]] = []
+    # Shared across repositories: the per-repository ceiling alone lets a --source
+    # run over 20 repos spend 20 times what the user thought they capped.
+    spend = {"verify": 0.0}
     for index, target in enumerate(targets, start=1):
         if len(targets) > 1:
             print(f"\n{'=' * 70}", flush=True)
             print(f"[{index}/{len(targets)}] {target.repo_path.name}", flush=True)
             print("=" * 70, flush=True)
         try:
-            exit_code |= await run(target, skipped)
+            exit_code = max(exit_code, await run(target, skipped, spend))
         except (ValueError, OSError) as exc:
             print(f"  ! {target.repo_path.name}: {exc}", file=sys.stderr)
             exit_code = 1
@@ -294,8 +335,11 @@ async def run_all(config: WikiConfig) -> int:
     return exit_code
 
 
-async def run(config: WikiConfig, skipped: list | None = None) -> int:
+async def run(
+    config: WikiConfig, skipped: list | None = None, spend: dict | None = None
+) -> int:
     skipped = skipped if skipped is not None else []
+    spend = spend if spend is not None else {"verify": 0.0}
     print(f"Repository: {config.repo_path}", flush=True)
     print(f"Output:     {config.output_path}", flush=True)
     print(f"Model:      {config.model}  (concurrency {config.concurrency})", flush=True)
@@ -384,6 +428,16 @@ async def run(config: WikiConfig, skipped: list | None = None) -> int:
         if graph is not None:
             print("  - 07-cartography/file-graph.md      (deterministic)")
             print("  - 07-cartography/module-graph.md    (deterministic)")
+        if config.verify:
+            wanted = (set(verify_mod.ANALYTICAL_KEYS)
+                      if config.verify_scope == "analytical" else None)
+            units = [s for s in specs
+                     if (wanted is None or s.key in wanted) and s.kind != "cartography"]
+            print(f"\nVerification: {len(units)} page(s), "
+                  f"~${len(units) * verify_mod.COST_PER_PAGE_USD:.2f} estimated "
+                  f"(measured at ~${verify_mod.COST_PER_PAGE_USD:.2f}/page on sonnet)")
+            for spec in units:
+                print(f"  - {spec.path}")
         return 0
 
     config.output_path.mkdir(parents=True, exist_ok=True)
@@ -464,14 +518,126 @@ async def run(config: WikiConfig, skipped: list | None = None) -> int:
             print(f"  ! {result.spec.path}: {result.error[:200]}", file=sys.stderr)
     print(f"Time:      {report.elapsed_s:.1f}s")
     if report.total_cost_usd:
-        print(f"Cost:      ${report.total_cost_usd:.4f}")
+        label = "Cost:      " if not config.verify else "Generation:"
+        print(f"{label} ${report.total_cost_usd:.4f}")
     print(f"\nWiki at: {nav_files[0]}")
 
     # Only now is the wiki coherent: pages, cartography, index and validation all
     # done. Committing drops the snapshot and clears the interrupted-run marker.
     journal.commit()
 
-    return 1 if report.failed else 0
+    # Verification runs AFTER the commit, on purpose. It is the longest, least
+    # reliable stage; inside the transaction a rate limit on an optional advisory
+    # check would discard a generation that completed perfectly. An interrupted
+    # verification should lose the verification, not the wiki.
+    exit_code = 1 if report.failed else 0
+    if config.verify:
+        try:
+            verdict = await _verify_phase(
+                config, scan, results, spend, report.total_cost_usd
+            )
+            exit_code = max(exit_code, verdict)
+        except Exception as exc:  # noqa: BLE001 - advisory step must never be fatal
+            print(f"\nVerification failed ({exc}). The wiki is unaffected.",
+                  file=sys.stderr)
+    else:
+        # A stale report claiming errors that were already fixed is itself a
+        # factual error — the exact failure this feature exists to prevent.
+        verify_mod.clear_artifacts(config.output_path)
+
+    return exit_code
+
+
+async def _verify_phase(
+    config: WikiConfig, scan, results: list[PageResult], spend: dict,
+    generation_cost: float = 0.0,
+) -> int:
+    """Check the wiki's claims against the code. Returns the exit code contribution."""
+    wanted = (
+        set(verify_mod.ANALYTICAL_KEYS)
+        if config.verify_scope == "analytical"
+        else None
+    )
+    pages: list[tuple[str, str, str]] = []
+    for result in results:
+        if wanted is not None and result.spec.key not in wanted:
+            continue
+        if result.spec.kind == "cartography":
+            continue
+        # --only runs hand back PageResults with empty markdown; the file on disk
+        # is the only reliable source of page text.
+        page_file = config.output_path / result.spec.path
+        if not page_file.is_file():
+            continue
+        pages.append((result.spec.path, result.spec.title, page_file.read_text("utf-8")))
+
+    if not pages:
+        print("\nVerification: no pages in scope.", flush=True)
+        return 0
+
+    total_cap = config.verify_total_usd
+    if total_cap > 0 and spend["verify"] >= total_cap:
+        print(f"\nVerification skipped: the run has spent "
+              f"${spend['verify']:.2f} of its ${total_cap:.2f} total budget.",
+              file=sys.stderr, flush=True)
+        return 0
+    budget = config.verify_max_usd
+    if total_cap > 0:
+        remaining = total_cap - spend["verify"]
+        budget = min(budget, remaining) if budget > 0 else remaining
+    config = replace(config, verify_max_usd=budget)
+
+    print(f"\nVerifying {len(pages)} page(s) with {config.verify_model} "
+          f"(budget ${config.verify_max_usd:.2f})...", flush=True)
+    runner = ClaudeRunner(config)
+    verdict = await verify_mod.run_verification(config, scan, runner, pages)
+    spend["verify"] += verdict.cost_usd
+
+    t = translator(config.language)
+    report_path = verify_mod.write_report(config, verdict, t)
+    results.append(
+        PageResult(
+            spec=PageSpec(
+                key="verification.report",
+                path=str(report_path.relative_to(config.output_path)),
+                title=t("verify.title"),
+                section="sec.verification",
+                kind="verification",
+                order=810,
+                prompt="",
+                summary=t("verify.m.findings") + f": {len(verdict.findings)}",
+            ),
+            status="generated",
+        )
+    )
+    assemble(config, scan, results)  # idempotent: rebuilds README/SUMMARY only
+
+    print(f"  {verdict.pages_verified} verified, {verdict.pages_cached} cached | "
+          f"{verdict.claims_checked} claim(s) | {len(verdict.findings)} finding(s), "
+          f"{len(verdict.overturned)} overturned | ${verdict.cost_usd:.2f}", flush=True)
+    if verdict.pages_skipped:
+        print(f"  {len(verdict.pages_skipped)} page(s) not verified: "
+              + "; ".join(verdict.pages_skipped[:3])
+              + ("; ..." if len(verdict.pages_skipped) > 3 else ""),
+              file=sys.stderr, flush=True)
+    if verdict.claims_unanswered or verdict.evidence_rejected:
+        print(f"  {verdict.claims_unanswered} claim(s) unanswered, "
+              f"{verdict.evidence_rejected} contradiction(s) dropped for unusable "
+              "evidence", file=sys.stderr, flush=True)
+    # Printed here and not in the summary above: verification is often the more
+    # expensive half, and the summary is written before it runs.
+    print(f"  Total for this repository: "
+          f"${generation_cost + verdict.cost_usd:.4f}", flush=True)
+    for finding in verdict.findings[:5]:
+        print(f"  ! [{finding.severity}] {finding.page}: {finding.claim[:90]}")
+    if len(verdict.findings) > 5:
+        print(f"  ... (+{len(verdict.findings) - 5}) see {report_path.name}")
+
+    if config.verify_fail_on == "any" and verdict.findings:
+        return 4
+    if config.verify_fail_on == "high" and verdict.has_high:
+        return 4
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

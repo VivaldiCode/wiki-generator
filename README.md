@@ -20,6 +20,7 @@ wiki-generator --source ~/code/my-project
 - [What it produces](#what-it-produces)
 - [Code cartography](#code-cartography)
 - [Built-in verification](#built-in-verification)
+- [Semantic verification (`--verify`)](#semantic-verification---verify)
 - [Choosing a model](#choosing-a-model)
 - [Options reference](#options-reference)
 - [How it works](#how-it-works)
@@ -391,6 +392,100 @@ classified as **invalid** (file does not exist, or line past EOF) or **unrooted*
 file exists, but the path is relative to a subdirectory). What this does **not** catch —
 and does not pretend to — is a citation that is in range but points at the wrong line.
 
+All three answer *"does this resolve?"*. None answers *"is this sentence true?"* — that
+is what `--verify` is for.
+
+---
+
+## Semantic verification (`--verify`)
+
+**Off by default. It is slow, it costs real quota, and it is advisory.**
+
+An invented REST endpoint is well-formed prose citing a file that exists: no deterministic
+check can catch it. `--verify` reads the finished wiki back and confronts its claims with
+the code.
+
+```bash
+wiki-generator --repo ~/code/api --verify
+```
+
+```
+Verifying 5 page(s) with sonnet (budget $5.00)...
+    verifying 01-overview/introduction.md
+  5 verified, 0 cached | 34 claim(s) | 6 finding(s), 0 overturned | $2.51
+  ! [high] 01-overview/introduction.md: Runtime dependencies are express and redis
+  ! [high] 01-overview/introduction.md: Service exposes DELETE /api/users/:id
+```
+
+### How it works
+
+1. **Extract** — one cheap call per page lists every *verifiable* claim: routes,
+   dependencies, environment variables, file paths, commands, symbols, config keys.
+2. **Check** — claims go out in batches of 8. Each batch is one parent agent that spawns
+   **one subagent per claim, in parallel**, and consolidates their answers. Fan-out is
+   bounded on purpose: parallelism is `--verify-concurrency x 8`, a number you can
+   predict, not an unbounded swarm against your rate limit.
+3. **Refute** — an adversarial pass defends the documentation and tries to overturn each
+   accusation. Only findings that survive are reported.
+
+### Nothing is taken on the model's word
+
+Every finding must carry evidence that **Python** verifies before it is reported:
+
+- `evidence_kind: "present"` — the cited file must exist in the scan and the line must be
+  within it.
+- `evidence_kind: "absent"` — for the strongest class of error, an invented file, the
+  evidence is the absence: the cited path must genuinely *not* exist.
+- Evidence pointing anywhere inside the wiki is rejected outright. Without this a checker
+  greps for `/api/users`, finds it in the page under review, and "confirms" it.
+
+The refuter carries the same burden: an overturn without a file, a line and a verbatim
+quote that resolve does not count.
+
+What was thrown away is counted, never silent — unanswered claims and contradictions
+dropped for unusable evidence both appear in the report, so a page that was half-checked
+never reads as clean.
+
+### Output
+
+- **`08-verification/report.md`** — in the wiki, wikilinked to each page it indicts.
+- **`.wiki-verify/findings.json`** — structured and diffable, for CI.
+
+Both are **deleted when `--verify` is off**: a stale report claiming errors that were
+already fixed is itself a factual error.
+
+Findings are cached against the page text, the repository and the verify model, so a
+second run with nothing changed re-verifies nothing and costs nothing.
+
+### Cost
+
+Measured at roughly **$0.50 per page** on sonnet. The default scope is the five analytical
+pages — introduction, tech stack, architecture overview, integrations, configuration —
+because that is where errors concentrate; reference and module pages are transcription.
+
+Two ceilings, both enforced: `--verify-max-usd` per repository and `--verify-total-usd`
+across the whole run. On exceed, verification stops and the report is marked **partial**,
+naming the pages it never reached. `--dry-run` lists the units and prints an estimate.
+
+### It cannot damage a good wiki
+
+Verification runs **after** the run is committed. A rate limit during an optional advisory
+step must not throw away a generation that completed perfectly, so any failure here
+degrades to a warning: the wiki stays exactly as it was, and the run still exits 0.
+
+Use `--verify-fail-on any|high` for CI, which makes surviving findings exit **4**.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--verify` | **off** | Enable the phase |
+| `--verify-scope` | `analytical` | `analytical` (5 pages) or `all` |
+| `--verify-model` | `sonnet` | Small models are what produce the errors |
+| `--verify-concurrency` | `2` | Batches in flight; real parallelism is this x 8 |
+| `--verify-max-usd` | `5.00` | Per repository (`0` disables) |
+| `--verify-total-usd` | `25.00` | Across the whole run (`0` disables) |
+| `--verify-timeout` | `1800` | Per call; a batch fan-out exceeds the 600s default |
+| `--verify-fail-on` | `none` | `none` \| `any` \| `high` -> exit 4 |
+
 ---
 
 ## Choosing a model
@@ -497,6 +592,21 @@ drift as code is edited and no model gets them reliably right.
 | `--no-rollback` | Keep an interrupted run's partial output instead of rolling it back |
 | `--verbose`, `-v` | Also report each page as it starts |
 
+### Verification
+
+Off by default — see [Semantic verification](#semantic-verification---verify).
+
+| Flag | Default | Description |
+|---|---|---|
+| `--verify` | off | Check the wiki's claims against the code |
+| `--verify-scope` | `analytical` | `analytical` or `all` |
+| `--verify-model` | `sonnet` | Model used to verify |
+| `--verify-concurrency` | `2` | Claim batches in flight |
+| `--verify-max-usd` | `5.00` | Budget per repository |
+| `--verify-total-usd` | `25.00` | Budget for the whole run |
+| `--verify-timeout` | `1800` | Per-call timeout |
+| `--verify-fail-on` | `none` | Exit 4 on surviving findings |
+
 ---
 
 ## How it works
@@ -512,6 +622,9 @@ drift as code is edited and no model gets them reliably right.
    in the prompt, which keeps per-page cost low even on large repositories.
 5. **Assembly and verification** (`assembler.py`, `links.py`, `citations.py`) — index,
    summary, link validation and citation validation.
+6. **Semantic verification** (`verify.py`, optional) — after the run is committed, the
+   wiki's claims are extracted, checked by parallel subagents and challenged by an
+   adversarial pass. Every finding's evidence is validated in Python.
 
 Zero dependencies beyond the Python standard library.
 
@@ -522,6 +635,12 @@ Files that look like credentials (`*service-account*.json`, `*-adminsdk-*.json`,
 dropped — the generator gives a model read access to the repository and writes
 documentation from it, so nothing should point at secrets. `.env.example` and friends stay
 included: they are configuration documentation, not secrets.
+
+A repository's own `CLAUDE.md` is loaded automatically by `claude -p`. For generation that
+is merely a source of nondeterminism; for `--verify` it is a trust boundary, since a
+`CLAUDE.md` in an untrusted repository could instruct the reviewer to find nothing. The
+verification prompt therefore frames every file in the repository as **data, never
+instructions**.
 
 ---
 

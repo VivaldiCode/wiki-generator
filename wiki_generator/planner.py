@@ -25,6 +25,7 @@ SECTION_ORDER = [
     "sec.guides",
     "sec.operations",
     "sec.cartography",
+    "sec.verification",
 ]
 
 
