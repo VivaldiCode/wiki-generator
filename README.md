@@ -84,12 +84,12 @@ wiki-generator --source ~/code --output ~/wikis
 ```
 
 ```
-Detetados 4 repositorios git em /Users/me/code:
+Found 4 git repositories in /Users/me/code:
   - api-gateway          -> /Users/me/wikis/api-gateway
   - web-app              -> /Users/me/wikis/web-app
   - mobile               -> /Users/me/wikis/mobile
   - infra                -> /Users/me/wikis/infra
-Uma wiki por repositorio. Usa --single para gerar uma so.
+One wiki per repository. Use --single to generate a single one.
 ```
 
 Without `--output`, each wiki is written inside its own repository (`<repo>/wiki/`).
@@ -113,15 +113,15 @@ seconds a status line reports throughput and estimated time remaining:
 ```
 [2/7] api-gateway
 ======================================================================
-A analisar o repositorio...
-  312 ficheiros | 148 de codigo | 41022 linhas | 6 modulos
-A construir o grafo de dependencias (code cartography)...
-  187 nos | 421 ligacoes | 2 ciclos | 9 ficheiros isolados
+Scanning repository...
+  312 files | 148 source | 41022 lines | 6 modules
+Building the dependency graph (code cartography)...
+  187 nodes | 421 edges | 2 cycles | 9 orphan files
 
-Plano: 44 paginas geradas por modelo
+Plan: 44 model-generated pages
 [1/44] + 01-overview/introduction.md
 [2/44] + 01-overview/tech-stack.md
-    ... 2/44 concluidas | 10 em curso | 1m decorridos | ETA ~7m
+    ... 2/44 done | 10 in flight | 1m elapsed | ETA ~7m
 [3/44] + 02-architecture/overview.md
 ```
 
