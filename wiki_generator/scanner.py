@@ -10,6 +10,10 @@ from .config import WikiConfig
 from .models import FileInfo, ModuleInfo, RepoScan
 from .utils import read_text, sha1_file, slugify
 
+class EmptyRepositoryError(ValueError):
+    """The repository has nothing a wiki could be built from."""
+
+
 IGNORE_DIRS = {
     ".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "__pycache__",
     "dist", "build", "out", "target", "vendor", "coverage", "htmlcov",
@@ -154,6 +158,16 @@ def find_repositories(root: Path, max_depth: int = 3) -> list[Path]:
 
     walk(root, 1)
     return found
+
+
+def substance(scan: RepoScan) -> tuple[int, int]:
+    """How much there actually is to document: (content lines, content files).
+
+    Lock files, generated output and binaries are already out of the scan, so
+    what remains is what a reader would call the repository's content. A repo
+    holding only a one-line README scores (1, 1) and is not worth a wiki.
+    """
+    return scan.total_lines, len(scan.files)
 
 
 def count_repo_files(repo: Path, cap: int = 20_000) -> int:
@@ -350,9 +364,8 @@ def scan_repo(config: WikiConfig) -> RepoScan:
         )
 
     if not files:
-        raise ValueError(
-            f"No analysable files in {repo}. "
-            "Check --include/--exclude, or whether the directory is empty."
+        raise EmptyRepositoryError(
+            f"no analysable files (check --include/--exclude, or the directory is empty)"
         )
 
     def is_test(rel: str) -> bool:

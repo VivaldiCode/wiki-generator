@@ -41,6 +41,9 @@ class WikiConfig:
     files_per_reference_page: int = 6
     max_reference_pages: int = 60
     max_file_size_bytes: int = 400_000
+    # Below this, a repository is skipped: a wiki built from a one-line
+    # README is 20 pages of "Gaps / Open questions" and no information.
+    min_lines: int = 50
     include_reference: bool = True
     include_globs: tuple[str, ...] = ()
     exclude_globs: tuple[str, ...] = ()

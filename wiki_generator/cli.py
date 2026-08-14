@@ -20,7 +20,13 @@ from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
 from .journal import RunJournal
-from .scanner import count_repo_files, find_repositories, scan_repo
+from .scanner import (
+    EmptyRepositoryError,
+    count_repo_files,
+    find_repositories,
+    scan_repo,
+    substance,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -98,6 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
     structure.add_argument("--single", action="store_true",
                            help="Treat the whole tree as a single repository, even if it "
                                 "contains several git repos (default: one wiki per repo).")
+    structure.add_argument("--min-lines", type=int, default=None, metavar="N",
+                           help="Skip repositories with fewer than N lines of content "
+                                "(default: 50). A wiki built from a one-line README is "
+                                "pages of empty headings. Use 0 to never skip.")
     structure.add_argument("--no-cartography", action="store_true",
                            help="Skip the file dependency graph.")
     structure.add_argument("--include", action="append", default=None, metavar="GLOB",
@@ -150,6 +160,7 @@ def _config_from_args(args: argparse.Namespace) -> WikiConfig:
         "max_modules": args.max_modules,
         "files_per_reference_page": args.files_per_reference_page,
         "max_reference_pages": args.max_reference_pages,
+        "min_lines": args.min_lines,
         "include_globs": tuple(args.include) if args.include else None,
         "exclude_globs": tuple(args.exclude) if args.exclude else None,
         "only": tuple(args.only) if args.only else None,
@@ -263,20 +274,28 @@ async def run_all(config: WikiConfig) -> int:
         print("One wiki per repository. Use --single to generate a single one.\n", flush=True)
 
     exit_code = 0
+    skipped: list[tuple[str, str]] = []
     for index, target in enumerate(targets, start=1):
         if len(targets) > 1:
             print(f"\n{'=' * 70}", flush=True)
             print(f"[{index}/{len(targets)}] {target.repo_path.name}", flush=True)
             print("=" * 70, flush=True)
         try:
-            exit_code |= await run(target)
+            exit_code |= await run(target, skipped)
         except (ValueError, OSError) as exc:
             print(f"  ! {target.repo_path.name}: {exc}", file=sys.stderr)
             exit_code = 1
+
+    if skipped:
+        print(f"\n{'=' * 70}", flush=True)
+        print(f"Skipped {len(skipped)} of {len(targets)} repositories:", flush=True)
+        for name, reason in skipped:
+            print(f"  - {name}: {reason}", flush=True)
     return exit_code
 
 
-async def run(config: WikiConfig) -> int:
+async def run(config: WikiConfig, skipped: list | None = None) -> int:
+    skipped = skipped if skipped is not None else []
     print(f"Repository: {config.repo_path}", flush=True)
     print(f"Output:     {config.output_path}", flush=True)
     print(f"Model:      {config.model}  (concurrency {config.concurrency})", flush=True)
@@ -309,7 +328,13 @@ async def run(config: WikiConfig) -> int:
             )
 
     print("Scanning repository...", flush=True)
-    scan = scan_repo(config)
+    try:
+        scan = scan_repo(config)
+    except EmptyRepositoryError as exc:
+        # Not a failure: there is genuinely nothing to document.
+        print(f"  Skipped: {exc}", flush=True)
+        skipped.append((config.repo_path.name, str(exc)))
+        return 0
     print(
         f"  {len(scan.files)} files | {len(scan.source_files)} source | "
         f"{scan.total_lines} lines | {len(scan.modules)} modules"
@@ -323,6 +348,16 @@ async def run(config: WikiConfig) -> int:
             print(f"      {path}")
         if len(scan.sensitive_skipped) > 10:
             print(f"      ... (+{len(scan.sensitive_skipped) - 10})")
+
+    lines, files = substance(scan)
+    if config.min_lines > 0 and lines < config.min_lines:
+        reason = (
+            f"only {lines} line(s) across {files} file(s), "
+            f"below the --min-lines threshold of {config.min_lines}"
+        )
+        print(f"  Skipped: {reason}", flush=True)
+        skipped.append((config.repo_path.name, reason))
+        return 0
 
     graph = None
     graph_ctx = ""

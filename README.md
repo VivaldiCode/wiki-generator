@@ -133,7 +133,33 @@ Plan: 44 model-generated pages
 
 Use `--verbose` to also see each page as it starts.
 
-### 6. Interrupted runs roll back
+### 6. Repositories with nothing to document are skipped
+
+A wiki built from a one-line README is twenty pages of empty headings and no
+information — worse than no wiki, because it looks like documentation. Repositories
+below a content threshold are skipped, and the reason is reported:
+
+```
+[1/4] vazio
+Scanning repository...
+  Skipped: no analysable files (check --include/--exclude, or the directory is empty)
+[4/4] so-readme
+  Skipped: only 1 line(s) across 1 file(s), below the --min-lines threshold of 50
+
+======================================================================
+Skipped 2 of 4 repositories:
+  - vazio: no analysable files (check --include/--exclude, or the directory is empty)
+  - so-readme: only 1 line(s) across 1 file(s), below the --min-lines threshold of 50
+```
+
+The threshold counts lines across the files that survive the scan — lock files,
+generated output and binaries are already excluded, so what is measured is what a reader
+would call the repository's content. The default is 50 lines; `--min-lines 0` disables it.
+
+A skip is not a failure: the exit code stays 0, and no output folder is created for the
+skipped repository.
+
+### 7. Interrupted runs roll back
 
 A run that dies halfway — Ctrl-C, a crash, a closed laptop — would leave a wiki whose
 index, cartography and pages disagree with each other. That half-state is worse than no
@@ -157,7 +183,7 @@ the fourth only — the three already committed are complete and correct, and st
 
 Use `--no-rollback` to keep a partial run's output and continue from it incrementally.
 
-### 7. Incremental regeneration
+### 8. Incremental regeneration
 
 Every page stores a fingerprint of the source files it was built from, in
 `.wiki-manifest.json`. On a second run, only pages whose source files changed are
@@ -171,7 +197,7 @@ wiki-generator --source ~/code/my-project --force # ignore the cache
 Changing the model, the language or the wiki structure also invalidates the cache
 automatically.
 
-### 8. Regenerate only part of it
+### 9. Regenerate only part of it
 
 ```bash
 # one specific page
@@ -186,7 +212,7 @@ wiki-generator --source . --only module --only reference
 
 The index still lists the whole wiki, not just what was regenerated.
 
-### 9. Save logs for debugging
+### 10. Save logs for debugging
 
 ```bash
 wiki-generator --source ~/code/my-project --log-dir /tmp/wg-logs
@@ -199,7 +225,7 @@ suffix. When a page comes out wrong, this is where you find out why.
 > Logs contain the full prompt, which includes manifest excerpts and your repository's
 > file tree. Treat the log folder with the same care as the code.
 
-### 10. Large repositories
+### 11. Large repositories
 
 ```bash
 wiki-generator --source . \
@@ -209,7 +235,7 @@ wiki-generator --source . \
   --exclude '**/*.pb.go'
 ```
 
-### 11. Language
+### 12. Language
 
 The wiki content language is configurable:
 
@@ -217,7 +243,7 @@ The wiki content language is configurable:
 wiki-generator --source . --language pt     # en (default), pt, pt-br, es, fr, de, it
 ```
 
-### 12. Configuration file
+### 13. Configuration file
 
 ```bash
 wiki-generator --config wiki.config.json
@@ -458,6 +484,7 @@ drift as code is edited and no model gets them reliably right.
 | `--no-reference` | — | Skip the low-level reference |
 | `--no-cartography` | — | Skip the dependency graph |
 | `--single` | — | Treat the whole tree as a single repository |
+| `--min-lines` | `50` | Skip repositories below this many lines of content (`0` disables) |
 | `--include` / `--exclude` | — | File globs (repeatable) |
 
 ### Behaviour
