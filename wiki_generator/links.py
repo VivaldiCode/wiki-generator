@@ -17,7 +17,17 @@ FENCED_BLOCK = re.compile(r"```.*?```", re.S)
 INLINE_CODE = re.compile(r"`[^`\n]*`")
 
 
-def _mask_code(text: str) -> str:
+def mask_fences(text: str) -> str:
+    """Replace fenced blocks with spaces, preserving offsets and inline code.
+
+    For citations the inline code IS the claim (`path/file.py:12`), so masking it
+    like `mask_code` does would silence the check entirely instead of only
+    ignoring the examples.
+    """
+    return FENCED_BLOCK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+
+
+def mask_code(text: str) -> str:
     """Replace code with spaces, preserving offsets.
 
     Obsidian does not interpret wikilinks inside code, and bash uses `[[ ]]` as
@@ -58,7 +68,7 @@ def validate_and_fix(wiki_root: Path, *, fix: bool = True) -> dict:
 
     for page in iter_pages(wiki_root):
         text = page.read_text(encoding="utf-8")
-        masked = _mask_code(text)
+        masked = mask_code(text)
         replacements: list[tuple[int, int, str]] = []
 
         for match in WIKILINK.finditer(masked):

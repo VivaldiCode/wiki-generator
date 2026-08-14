@@ -133,7 +133,12 @@ class WikiGenerator:
         finally:
             ticker.cancel()
 
-        self.manifest.prune({spec.key for spec in specs} | set(self.manifest.data["pages"]))
+        # Only the keys in this run survive. Unioning with the existing keys — as
+        # this once did — made the filter a no-op and stale entries accumulated.
+        # Under --only, `specs` is a subset by design: pruning to it would evict
+        # every other page's fingerprint and make the next full run pay again.
+        if not self.config.only:
+            self.manifest.prune({spec.key for spec in specs})
         self.manifest.save()
 
         return GenerationReport(
@@ -194,7 +199,7 @@ class WikiGenerator:
                     "including the ones you had already covered.\n</coverage_failure>"
                 )
                 retry = await runner.run(
-                    retry_prompt, self.system_prompt, f'{spec.key}.cobertura'
+                    retry_prompt, self.system_prompt, f'{spec.key}.coverage'
                 )
                 retried = self._clean(retry.text, spec)
                 still_missing = [m for m in spec.required_markers if m not in retried]
