@@ -1,9 +1,9 @@
-"""wiki-generator: gera uma wiki completa de um repositorio via Claude Code headless."""
+"""wiki-generator: build a complete wiki for a repository via headless Claude Code."""
 
 __version__ = "0.1.0"
 
-# Bump quando a estrutura da wiki ou os prompts mudarem de forma incompativel.
-# Faz parte do fingerprint de cache: mudar isto invalida todas as paginas.
+# Bump when the wiki structure or the prompts change incompatibly.
+# Part of the cache fingerprint: changing it invalidates every page.
 STRUCTURE_VERSION = "1"
 
 __all__ = ["__version__", "STRUCTURE_VERSION"]

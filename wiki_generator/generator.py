@@ -1,4 +1,4 @@
-"""Orquestracao: cache incremental + execucao concorrente + escrita das paginas."""
+"""Orchestration: incremental cache, concurrent execution, page writing."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class GenerationReport:
 
 # ----------------------------------------------------------------------
 class Manifest:
-    """Guarda o fingerprint de cada pagina para permitir regeracao incremental."""
+    """Stores each page's fingerprint so regeneration can be incremental."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -124,8 +124,8 @@ class WikiGenerator:
         runner = ClaudeRunner(self.config)
         self._total = len(specs)
 
-        # Numa corrida de dezenas de minutos, saber so o que ja acabou nao chega:
-        # esta tarefa mostra o ritmo e o tempo restante enquanto se espera.
+        # On a run lasting tens of minutes, knowing only what already finished is
+        # not enough: this task reports throughput and time remaining while you wait.
         ticker = asyncio.create_task(self._progress_ticker())
         try:
             tasks = [self._generate_page(runner, spec) for spec in specs]
@@ -180,18 +180,18 @@ class WikiGenerator:
             response = await runner.run(spec.prompt, self.system_prompt, spec.key)
             markdown = self._clean(response.text, spec)
 
-            # Modelos pequenos por vezes deixam ficheiros de fora numa pagina densa.
-            # Verificar e exigir explicitamente o que falta e mais fiavel do que
-            # confiar que o outline foi seguido.
+            # Small models sometimes leave files out of a dense page. Checking and
+            # explicitly demanding what is missing is more reliable than trusting
+            # the outline was followed.
             missing = [m for m in spec.required_markers if m not in markdown]
             if missing:
                 retry_prompt = (
                     f"{spec.prompt}\n\n<coverage_failure>\n"
-                    "A tua tentativa anterior omitiu estes itens obrigatorios:\n"
+                    "Your previous attempt omitted these mandatory items:\n"
                     + "\n".join(f"- {item}" for item in missing)
-                    + "\n\nEscreve a pagina completa de novo. Cada item acima TEM de "
-                    "ter a sua propria seccao, com o texto exato indicado. Nao omitas "
-                    "nenhum, nem os que ja tinhas coberto.\n</coverage_failure>"
+                    + "\n\nWrite the complete page again. Every item above MUST have "
+                    "its own section, with the exact text given. Do not omit any, "
+                    "including the ones you had already covered.\n</coverage_failure>"
                 )
                 retry = await runner.run(
                     retry_prompt, self.system_prompt, f'{spec.key}.cobertura'
@@ -234,8 +234,8 @@ class WikiGenerator:
         return dedupe_leading_heading(ensure_heading(markdown, spec.title))
 
     def _add_frontmatter(self, spec: PageSpec, markdown: str) -> str:
-        # Links entre paginas da wiki sao wikilinks do Obsidian, resolvidos a
-        # partir da raiz do vault — nao caminhos relativos.
+        # Links between wiki pages are Obsidian wikilinks resolved from the vault
+        # root — not relative paths.
         base_dir = spec.path.rsplit("/", 1)[0] if "/" in spec.path else ""
         markdown = markdown_links_to_wikilinks(markdown, base_dir)
         footer = (

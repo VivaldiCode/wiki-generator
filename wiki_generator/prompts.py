@@ -1,8 +1,9 @@
-"""Construcao dos prompts. A estrutura da wiki e definida aqui, e so aqui."""
+"""Prompt construction. The wiki structure is defined here, and only here."""
 
 from __future__ import annotations
 
 from .config import WikiConfig
+from .i18n import translator
 from .models import ModuleInfo, RepoScan
 from .utils import bullet_list, human_size, render_tree
 
@@ -32,8 +33,11 @@ Non-negotiable rules:
 4. Output the page as pure GitHub-flavored Markdown. The very first character of your
    final message MUST be `#`. No preamble, no "Now I have enough context", no
    "Here is the documentation", no sign-off, no meta-commentary about your process.
-5. Follow the required outline exactly: same headings, same order, same levels.
-   Keep a heading even if the answer is "not applicable in this repository".
+5. The required outline defines STRUCTURE, not literal text. Reproduce every heading it
+   lists, in the same order and at the same level, and keep a heading even if the answer
+   is "not applicable in this repository" — but WRITE EACH HEADING IN {language}. The
+   outline is in English only because it is an instruction addressed to you; copying it
+   verbatim into a page written in another language is wrong.
 6. Use Mermaid fenced blocks (```mermaid) for diagrams when the outline asks for one.
    Keep node labels short and quoted; never put parentheses inside unquoted labels.
 7. Be dense and factual. No marketing tone, no filler, no restating the heading.
@@ -68,17 +72,17 @@ Non-negotiable rules:
 
 # ----------------------------------------------------------------------
 def repo_context(scan: RepoScan, config: WikiConfig, tree_entries: int = 260) -> str:
-    """Bloco de contexto partilhado por todos os prompts."""
+    """Context block shared by every prompt."""
     languages = ", ".join(
-        f"{lang} ({count} ficheiros)" for lang, count in
+        f"{lang} ({count} files)" for lang, count in
         sorted(scan.languages.items(), key=lambda kv: -kv[1])[:8]
-    ) or "indeterminado"
+    ) or "unknown"
 
     modules = "\n".join(
-        f"- `{module.key}` — {module.file_count} ficheiros, {module.total_lines} linhas"
+        f"- `{module.key}` — {module.file_count} files, {module.total_lines} lines"
         f" ({', '.join(module.languages[:3])})"
         for module in scan.modules
-    ) or "- (nenhum modulo detetado)"
+    ) or "- (no modules detected)"
 
     manifests = ""
     for path, content in list(scan.manifest_excerpts.items())[:6]:
@@ -112,14 +116,14 @@ Directory tree (truncated):
 
 # ----------------------------------------------------------------------
 def wiki_pages_block(pages: list[tuple[str, str]]) -> str:
-    """Indice das paginas que vao existir, para o modelo so linkar o que existe."""
+    """Index of the pages that will exist, so the model only links what exists."""
     if not pages:
         return ""
     listed = "\n".join(f"- [[{path}]] — {title}" for path, title in pages)
     return f"""<wiki_pages>
-Paginas desta wiki. Sao os UNICOS destinos validos para um wikilink:
+Pages in this wiki. These are the ONLY valid wikilink targets:
 {listed}
-- [[README]] — indice da wiki
+- [[README]] — the wiki index
 </wiki_pages>
 """
 
@@ -149,7 +153,8 @@ Read enough files to be accurate. Prefer reading real code over inferring from n
 </investigate>
 
 <required_outline>
-The page MUST use exactly these headings, in this order:
+The page MUST carry every heading below, in this order and at this level — translated
+into the page's language, never copied verbatim from this English outline:
 
 {outline}
 </required_outline>
@@ -159,344 +164,344 @@ Output the Markdown page now, starting with `# {title}`.
 
 
 # ----------------------------------------------------------------------
-# Paginas fixas: (key, path, title, section, order, goal, outline, investigate)
+# Fixed pages: (key, path, title_key, summary_key, section, order, goal, outline, investigate)
 # ----------------------------------------------------------------------
 CORE_PAGES: list[dict] = [
     {
         "key": "overview.introduction",
         "path": "01-overview/introduction.md",
-        "title": "Introducao",
+        "title_key": "page.introduction.title",
+        "summary_key": "page.introduction.summary",
         "section": "sec.overview",
         "order": 110,
-        "summary": "O que e o projeto, que problema resolve e quais as capacidades principais.",
         "goal": "Explain what this project is, the problem it solves, and what it can do — derived strictly from the code and docs present.",
-        "outline": """## Em uma frase
-## Problema e contexto
-## Capacidades principais
-(lista com bullets; cada bullet aponta o ficheiro/modulo que a implementa)
-## Fora de ambito
-## Estado e maturidade
-(evidencias: testes, CI, versionamento, TODOs)
+        "outline": """## In one sentence
+## Problem and context
+## Main capabilities
+(bullet list; each bullet points at the file/module that implements it)
+## Out of scope
+## Maturity
+(evidence: tests, CI, versioning, TODOs)
 ## Gaps / Open questions""",
         "investigate": """- `README.md`, `docs/`, `CONTRIBUTING.md`, `CHANGELOG.md`
-- os entrypoints listados acima
-- manifestos de dependencias para perceber o dominio""",
+- the entrypoints listed above
+- dependency manifests, to understand the domain""",
     },
     {
         "key": "overview.tech-stack",
         "path": "01-overview/tech-stack.md",
-        "title": "Stack Tecnologica",
+        "title_key": "page.tech-stack.title",
+        "summary_key": "page.tech-stack.summary",
         "section": "sec.overview",
         "order": 120,
-        "summary": "Linguagens, frameworks, dependencias, ferramentas de build e tooling.",
         "goal": "Inventory the technology stack: languages, runtimes, frameworks, notable libraries, build/test/lint tooling.",
-        "outline": """## Resumo
-## Linguagens e runtimes
-(tabela: Linguagem | Versao exigida | Onde e usada | Evidencia)
-## Frameworks e bibliotecas principais
-(tabela: Nome | Versao | Para que serve neste projeto | Evidencia)
-## Build, testes e qualidade
-(tabela: Ferramenta | Comando | Ficheiro de configuracao)
-## Infraestrutura e servicos externos
+        "outline": """## Summary
+## Languages and runtimes
+(table: Language | Required version | Where it is used | Evidence)
+## Main frameworks and libraries
+(table: Name | Version | What it does in this project | Evidence)
+## Build, tests and quality
+(table: Tool | Command | Configuration file)
+## Infrastructure and external services
 ## Gaps / Open questions""",
-        "investigate": """- manifestos de dependencias (ja incluidos acima quando existem)
-- ficheiros de lock, Dockerfile, Makefile, workflows de CI
-- ficheiros de configuracao de linters/formatters/test runners""",
+        "investigate": """- dependency manifests (already included above when present)
+- lock files, Dockerfile, Makefile, CI workflows
+- linter/formatter/test-runner configuration files""",
     },
     {
         "key": "overview.repository-structure",
         "path": "01-overview/repository-structure.md",
-        "title": "Estrutura do Repositorio",
+        "title_key": "page.repository-structure.title",
+        "summary_key": "page.repository-structure.summary",
         "section": "sec.overview",
         "order": 130,
-        "summary": "Mapa de diretorios e a responsabilidade de cada um.",
         "goal": "Explain the repository layout: what lives where and why, plus naming/organisation conventions.",
-        "outline": """## Mapa de diretorios
-(tabela: Caminho | Responsabilidade | Notas)
-## Convencoes de organizacao
-(nomenclatura, colocacao de testes, onde vive configuracao, geracao de codigo)
-## Ficheiros de topo relevantes
-## Onde comecar a ler
-(3-5 ficheiros, por ordem, com justificacao)
+        "outline": """## Directory map
+(table: Path | Responsibility | Notes)
+## Organisation conventions
+(naming, where tests live, where configuration lives, code generation)
+## Notable top-level files
+## Where to start reading
+(3-5 files, in order, with a reason for each)
 ## Gaps / Open questions""",
-        "investigate": """- percorre os diretorios de topo e le 1-2 ficheiros representativos de cada
-- procura padroes repetidos de nomes de ficheiros""",
+        "investigate": """- walk the top-level directories and read 1-2 representative files from each
+- look for repeated file-naming patterns""",
     },
     {
         "key": "overview.glossary",
         "path": "01-overview/glossary.md",
-        "title": "Glossario",
+        "title_key": "page.glossary.title",
+        "summary_key": "page.glossary.summary",
         "section": "sec.overview",
         "order": 140,
-        "summary": "Termos de dominio e siglas usados no codigo.",
         "goal": "Define the domain vocabulary that appears in the code, so a newcomer can read identifiers without guessing.",
-        "outline": """## Termos de dominio
-(tabela: Termo | Significado neste projeto | Onde aparece)
-## Siglas e abreviaturas
-(tabela: Sigla | Expansao | Contexto)
-## Nomes que enganam
-(termos cujo significado aqui difere do uso comum; omite a seccao com "Nenhum identificado" se nao houver)
+        "outline": """## Domain terms
+(table: Term | What it means in this project | Where it appears)
+## Acronyms and abbreviations
+(table: Acronym | Expansion | Context)
+## Misleading names
+(terms whose meaning here differs from common usage; write "none identified" if there are none)
 ## Gaps / Open questions""",
-        "investigate": """- nomes de modelos/entidades/tabelas/tipos
-- comentarios e docstrings
-- nomes repetidos em identificadores e strings""",
+        "investigate": """- names of models/entities/tables/types
+- comments and docstrings
+- names repeated across identifiers and strings""",
     },
     {
         "key": "architecture.overview",
         "path": "02-architecture/overview.md",
-        "title": "Arquitetura — Visao de Alto Nivel",
+        "title_key": "page.architecture-overview.title",
+        "summary_key": "page.architecture-overview.summary",
         "section": "sec.architecture",
         "order": 210,
-        "summary": "Estilo arquitetural, blocos principais e como se relacionam.",
         "goal": "Describe the high-level architecture: architectural style, the main building blocks, and how they fit together.",
-        "outline": """## Estilo arquitetural
-(monolito / camadas / hexagonal / microservicos / CLI / biblioteca — com a evidencia que suporta a classificacao)
-## Diagrama de contexto
-(um bloco ```mermaid com `flowchart TD` mostrando o sistema, atores e sistemas externos)
-## Blocos principais
-(tabela: Bloco | Responsabilidade | Codigo)
-## Diagrama de componentes
-(um bloco ```mermaid com `flowchart LR` mostrando os blocos internos e as dependencias entre eles)
-## Regras de dependencia
-(que camada pode chamar qual; violacoes observadas)
-Para afirmar que nao ha violacoes tens de o ter procurado: usa o grafo em
-`<code_cartography>` e/ou um Grep por imports que atravessem camadas, e diz que
-verificacao fizeste. Sem essa verificacao, escreve "nao verificado exaustivamente".
+        "outline": """## Architectural style
+(monolith / layered / hexagonal / microservices / CLI / library — with the evidence that supports the classification)
+## Context diagram
+(one ```mermaid block with `flowchart TD` showing the system, actors and external systems)
+## Main building blocks
+(table: Block | Responsibility | Code)
+## Component diagram
+(one ```mermaid block with `flowchart LR` showing the internal blocks and the dependencies between them)
+## Dependency rules
+(which layer may call which; observed violations)
+To claim there are no violations you must have looked for them: use the graph in
+`<code_cartography>` and/or a Grep for imports crossing layers, and state which check
+you ran. Without that check, write "not exhaustively verified".
 ## Gaps / Open questions""",
-        "investigate": """- entrypoints e o que instanciam
-- diretorios de topo do codigo-fonte e os imports entre eles
-- configuracao de rotas/handlers/comandos""",
+        "investigate": """- entrypoints and what they instantiate
+- top-level source directories and the imports between them
+- route/handler/command configuration""",
     },
     {
         "key": "architecture.components",
         "path": "02-architecture/components.md",
-        "title": "Componentes e Responsabilidades",
+        "title_key": "page.components.title",
+        "summary_key": "page.components.summary",
         "section": "sec.architecture",
         "order": 220,
-        "summary": "Detalhe de cada componente logico e das suas fronteiras.",
         "goal": "Detail each logical component: responsibility, public surface, collaborators, and boundaries.",
-        "outline": """## Inventario de componentes
-(tabela: Componente | Modulo/caminho | Responsabilidade unica | Depende de)
-## Detalhe por componente
-(uma subseccao `###` por componente com: Responsabilidade, Interface publica, Colaboradores, Invariantes/pressupostos)
-## Acoplamentos notaveis
+        "outline": """## Component inventory
+(table: Component | Module/path | Single responsibility | Depends on)
+## Detail per component
+(one `###` subsection per component with: Responsibility, Public interface, Collaborators, Invariants/assumptions)
+## Notable coupling
 ## Gaps / Open questions""",
-        "investigate": """- os modulos listados no contexto do repositorio
-- classes/servicos/handlers exportados por cada um""",
+        "investigate": """- the modules listed in the repository context
+- classes/services/handlers exported by each one""",
     },
     {
         "key": "architecture.data-flow",
         "path": "02-architecture/data-flow.md",
-        "title": "Fluxos de Dados e Casos de Uso",
+        "title_key": "page.data-flow.title",
+        "summary_key": "page.data-flow.summary",
         "section": "sec.architecture",
         "order": 230,
-        "summary": "Como um pedido/tarefa atravessa o sistema, ponta a ponta.",
         "goal": "Trace the main end-to-end flows through the system, from entrypoint to persistence/response.",
-        "outline": """## Fluxos principais
-(lista dos 2-5 fluxos mais importantes, uma linha cada)
-## Detalhe por fluxo
-(uma subseccao `###` por fluxo, cada uma com: um paragrafo de resumo, um bloco ```mermaid com `sequenceDiagram`, e uma lista numerada dos passos com o ficheiro:linha de cada passo)
-## Tratamento de erros nos fluxos
-## Operacoes assincronas e background
+        "outline": """## Main flows
+(list of the 2-5 most important flows, one line each)
+## Detail per flow
+(one `###` subsection per flow, each with: a summary paragraph, one ```mermaid block with `sequenceDiagram`, and a numbered list of the steps with the file:line of each step)
+## Error handling in the flows
+## Asynchronous and background work
 ## Gaps / Open questions""",
-        "investigate": """- segue um pedido/comando desde o entrypoint ate ao efeito final
-- procura handlers, controllers, use cases, jobs, consumidores de filas""",
+        "investigate": """- follow a request/command from the entrypoint to its final effect
+- look for handlers, controllers, use cases, jobs, queue consumers""",
     },
     {
         "key": "architecture.data-model",
         "path": "02-architecture/data-model.md",
-        "title": "Modelo de Dados",
+        "title_key": "page.data-model.title",
+        "summary_key": "page.data-model.summary",
         "section": "sec.architecture",
         "order": 240,
-        "summary": "Entidades, esquemas, persistencia e migracoes.",
         "goal": "Document the data model: entities, their fields and relationships, storage technology and migrations.",
-        "outline": """## Tecnologia de persistencia
-## Entidades
-(tabela: Entidade | Definida em | Descricao)
-## Diagrama de relacoes
-(um bloco ```mermaid com `erDiagram`; se nao existir modelo relacional, usa `classDiagram` para as estruturas de dados principais)
-## Campos por entidade
-(uma subseccao `###` por entidade com tabela: Campo | Tipo | Restricoes | Notas)
-## Migracoes e evolucao do esquema
+        "outline": """## Persistence technology
+## Entities
+(table: Entity | Defined in | Description)
+## Relationship diagram
+(one ```mermaid block with `erDiagram`; if there is no relational model, use `classDiagram` for the main data structures)
+## Fields per entity
+(one `###` subsection per entity with a table: Field | Type | Constraints | Notes)
+## Migrations and schema evolution
 ## Gaps / Open questions""",
-        "investigate": """- modelos ORM, structs, dataclasses, schemas, ficheiros .sql, migracoes
-- se nao houver base de dados, documenta as estruturas de dados em memoria e formatos serializados""",
+        "investigate": """- ORM models, structs, dataclasses, schemas, .sql files, migrations
+- if there is no database, document the in-memory data structures and serialized formats""",
     },
     {
         "key": "architecture.integrations",
         "path": "02-architecture/integrations.md",
-        "title": "Integracoes Externas",
+        "title_key": "page.integrations.title",
+        "summary_key": "page.integrations.summary",
         "section": "sec.architecture",
         "order": 250,
-        "summary": "APIs, servicos, filas e dependencias externas em runtime.",
         "goal": "List every external system this project talks to at runtime and how the integration is implemented.",
-        "outline": """## Inventario de integracoes
-(tabela: Sistema externo | Direcao (in/out) | Protocolo | Implementado em | Credenciais)
-## Detalhe por integracao
-(uma subseccao `###` por integracao: para que serve, contrato, autenticacao, tratamento de erros e retries)
-## Interfaces expostas por este projeto
-(tabela: Interface | Metodo/tipo | Declarada em (ficheiro:linha) | O que faz)
-OBRIGATORIO: cada linha desta tabela corresponde a uma declaracao que LESTE. Abre os
-ficheiros de rotas/handlers e copia os caminhos tal como estao no codigo, incluindo o
-prefixo com que o router e montado. Se nao encontraste declaracoes de rotas, escreve
-que nao encontraste — nao preenchas a tabela com endpoints plausiveis.
+        "outline": """## Integration inventory
+(table: External system | Direction (in/out) | Protocol | Implemented in | Credentials)
+## Detail per integration
+(one `###` subsection each: what it is for, the contract, authentication, error handling and retries)
+## Interfaces exposed by this project
+(table: Interface | Method/type | Declared at (file:line) | What it does)
+MANDATORY: every row of this table corresponds to a declaration you READ. Open the
+route/handler files and copy the paths exactly as they appear in the code, including the
+prefix the router is mounted with. If you found no route declarations, say so — do not
+fill the table with plausible endpoints.
 ## Gaps / Open questions""",
-        "investigate": """- clientes HTTP, SDKs, drivers de base de dados, produtores/consumidores de filas
-- variaveis de ambiente com URLs, hosts, chaves
-- LE os ficheiros de rotas na integra e ve tambem onde o router e montado (o prefixo
-  final de um endpoint costuma vir do sitio onde e registado, nao do ficheiro da rota)
-- confirma cada endpoint com um Grep pelo caminho literal antes de o escrever""",
+        "investigate": """- HTTP clients, SDKs, database drivers, queue producers/consumers
+- environment variables holding URLs, hosts, keys
+- READ the route files in full and also find where the router is mounted (an endpoint's
+  final prefix usually comes from where it is registered, not from the route file)
+- confirm each endpoint with a Grep for the literal path before writing it down""",
     },
     {
         "key": "architecture.cross-cutting",
         "path": "02-architecture/cross-cutting.md",
-        "title": "Preocupacoes Transversais",
+        "title_key": "page.cross-cutting.title",
+        "summary_key": "page.cross-cutting.summary",
         "section": "sec.architecture",
         "order": 260,
-        "summary": "Configuracao, erros, logging, seguranca, concorrencia e performance.",
         "goal": "Document the cross-cutting mechanisms: configuration, error handling, logging, auth, security, concurrency, performance.",
-        "outline": """## Configuracao
-## Tratamento de erros
-## Logging e observabilidade
-## Autenticacao e autorizacao
-## Seguranca
-(gestao de segredos, validacao de input, superficies de risco observadas)
-## Concorrencia e paralelismo
-## Performance e caching
+        "outline": """## Configuration
+## Error handling
+## Logging and observability
+## Authentication and authorization
+## Security
+(secret management, input validation, observed risk surfaces)
+## Concurrency and parallelism
+## Performance and caching
 ## Gaps / Open questions""",
-        "investigate": """- middleware, decorators, interceptors, wrappers de excecoes
-- configuracao de logging, metricas, tracing
-- leitura de variaveis de ambiente e de ficheiros de configuracao""",
+        "investigate": """- middleware, decorators, interceptors, exception wrappers
+- logging, metrics and tracing configuration
+- reads of environment variables and configuration files""",
     },
     {
         "key": "architecture.decisions",
         "path": "02-architecture/decisions.md",
-        "title": "Decisoes de Desenho",
+        "title_key": "page.decisions.title",
+        "summary_key": "page.decisions.summary",
         "section": "sec.architecture",
         "order": 270,
-        "summary": "Decisoes arquiteturais inferidas, alternativas e trade-offs.",
         "goal": "Surface the significant design decisions visible in the code, with their trade-offs. Infer, but label inference as such.",
-        "outline": """## Decisoes significativas
-(uma subseccao `###` por decisao, no formato: **Contexto** / **Decisao** / **Evidencia no codigo** / **Trade-offs** / **Confianca** (alta se documentada, media se so inferida do codigo))
-## Padroes recorrentes
-## Divida tecnica observavel
-(TODOs, FIXMEs, duplicacao, workarounds — com ficheiro:linha)
+        "outline": """## Significant decisions
+(one `###` subsection per decision, in the format: **Context** / **Decision** / **Evidence in the code** / **Trade-offs** / **Confidence** (high if documented, medium if only inferred from the code))
+## Recurring patterns
+## Observable technical debt
+(TODOs, FIXMEs, duplication, workarounds — with file:line)
 ## Gaps / Open questions""",
-        "investigate": """- ADRs ou notas de desenho em `docs/`
-- comentarios que explicam "porque"
-- TODO/FIXME/HACK/XXX no codigo""",
+        "investigate": """- ADRs or design notes in `docs/`
+- comments that explain "why"
+- TODO/FIXME/HACK/XXX in the code""",
     },
     {
         "key": "guides.getting-started",
         "path": "05-guides/getting-started.md",
-        "title": "Primeiros Passos",
+        "title_key": "page.getting-started.title",
+        "summary_key": "page.getting-started.summary",
         "section": "sec.guides",
         "order": 510,
-        "summary": "Instalar, configurar e correr o projeto localmente.",
         "goal": "Give a working local setup path: prerequisites, install, configure, run, verify.",
-        "outline": """## Pre-requisitos
-(tabela: Requisito | Versao | Como verificar)
-## Instalacao
-(passos numerados com blocos de comandos reais deste repositorio)
-## Configuracao minima
-(variaveis/ficheiros obrigatorios para arrancar)
-## Correr o projeto
-## Verificar que funciona
-## Problemas comuns no arranque
+        "outline": """## Prerequisites
+(table: Requirement | Version | How to check)
+## Installation
+(numbered steps with real command blocks from this repository)
+## Minimum configuration
+(variables/files required to boot)
+## Running the project
+## Verifying it works
+## Common startup problems
 ## Gaps / Open questions""",
-        "investigate": """- README, Makefile, scripts do package.json, docker-compose
-- ficheiros .env.example
-- so documenta comandos que existam mesmo no repositorio""",
+        "investigate": """- README, Makefile, package.json scripts, docker-compose
+- .env.example files
+- only document commands that actually exist in the repository""",
     },
     {
         "key": "guides.development",
         "path": "05-guides/development.md",
-        "title": "Fluxo de Desenvolvimento",
+        "title_key": "page.development.title",
+        "summary_key": "page.development.summary",
         "section": "sec.guides",
         "order": 520,
-        "summary": "Como desenvolver, testar e validar alteracoes.",
         "goal": "Describe the day-to-day development workflow: code layout conventions, tests, linting, and the local feedback loop.",
-        "outline": """## Ciclo de desenvolvimento
-## Comandos uteis
-(tabela: Objetivo | Comando | Onde esta definido)
-## Testes
-(estrutura, como correr, como escrever um novo, cobertura)
-## Qualidade de codigo
-(linters, formatters, type checking, hooks de pre-commit)
-## Convencoes de codigo
-(observadas no codigo existente, nao inventadas)
-## Como adicionar uma funcionalidade nova
-(passos concretos com os ficheiros tipicamente tocados)
+        "outline": """## Development loop
+## Useful commands
+(table: Goal | Command | Where it is defined)
+## Tests
+(structure, how to run them, how to write a new one, coverage)
+## Code quality
+(linters, formatters, type checking, pre-commit hooks)
+## Code conventions
+(observed in the existing code, not invented)
+## How to add a new feature
+(concrete steps with the files typically touched)
 ## Gaps / Open questions""",
-        "investigate": """- configuracao dos test runners e ficheiros de teste existentes
-- configuracao de linters/formatters
-- workflows de CI para perceber o que e validado""",
+        "investigate": """- test runner configuration and existing test files
+- linter/formatter configuration
+- CI workflows, to see what is actually enforced""",
     },
     {
         "key": "operations.configuration",
         "path": "06-operations/configuration.md",
-        "title": "Configuracao",
+        "title_key": "page.configuration.title",
+        "summary_key": "page.configuration.summary",
         "section": "sec.operations",
         "order": 610,
-        "summary": "Variaveis de ambiente, ficheiros de configuracao e defaults.",
         "goal": "Produce a complete configuration reference: every env var and config option the code actually reads.",
-        "outline": """## Fontes de configuracao
-(precedencia entre defaults, ficheiros, ambiente, flags)
-## Variaveis de ambiente
-(tabela: Variavel | Obrigatoria | Default | Descricao | Lida em (ficheiro:linha))
-OBRIGATORIO: so entra na tabela uma variavel que encontraste a ser lida no codigo. O
-nome tem de ser copiado tal e qual. Uma variavel que aparece so num `.env.example` mas
-que nada le e uma linha diferente: assinala-a como nao utilizada.
-## Ficheiros de configuracao
-(tabela: Ficheiro | Formato | Conteudo | Usado por)
-## Flags de linha de comandos
-## Segredos
-(quais sao sensiveis e como sao fornecidos — nunca incluas valores reais)
+        "outline": """## Configuration sources
+(precedence between defaults, files, environment, flags)
+## Environment variables
+(table: Variable | Required | Default | Description | Read at (file:line))
+MANDATORY: a variable only enters this table if you found it being read in the code. The
+name must be copied verbatim. A variable that appears only in a `.env.example` but that
+nothing reads is a different case: mark it as unused.
+## Configuration files
+(table: File | Format | Contents | Used by)
+## Command-line flags
+## Secrets
+(which ones are sensitive and how they are supplied — never include real values)
 ## Gaps / Open questions""",
-        "investigate": """- procura por leituras de ambiente (os.environ, process.env, os.Getenv, System.getenv, ...)
-- .env.example, ficheiros de settings/config
-- parsers de argumentos CLI""",
+        "investigate": """- search for environment reads (os.environ, process.env, os.Getenv, System.getenv, ...)
+- .env.example, settings/config files
+- CLI argument parsers""",
     },
     {
         "key": "operations.deployment",
         "path": "06-operations/deployment.md",
-        "title": "Build e Deployment",
+        "title_key": "page.deployment.title",
+        "summary_key": "page.deployment.summary",
         "section": "sec.operations",
         "order": 620,
-        "summary": "Como se constroi, empacota e faz deploy do projeto.",
         "goal": "Document how the project is built, packaged, released and deployed, based on CI config and container/infra files.",
-        "outline": """## Artefactos produzidos
-## Processo de build
-## Pipeline de CI/CD
-(tabela: Workflow/job | Trigger | O que faz | Ficheiro)
-## Containerizacao
-(imagens, multi-stage, portas, volumes — se aplicavel)
-## Ambientes e promocao
+        "outline": """## Artifacts produced
+## Build process
+## CI/CD pipeline
+(table: Workflow/job | Trigger | What it does | File)
+## Containerization
+(images, multi-stage, ports, volumes — if applicable)
+## Environments and promotion
 ## Rollback
 ## Gaps / Open questions""",
-        "investigate": """- `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`, ficheiros de deploy
-- `Dockerfile`, `docker-compose`, manifestos k8s/helm/terraform
-- scripts de release e configuracao de packaging""",
+        "investigate": """- `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`, deploy files
+- `Dockerfile`, `docker-compose`, k8s/helm/terraform manifests
+- release scripts and packaging configuration""",
     },
     {
         "key": "operations.observability",
         "path": "06-operations/observability.md",
-        "title": "Observabilidade e Troubleshooting",
+        "title_key": "page.observability.title",
+        "summary_key": "page.observability.summary",
         "section": "sec.operations",
         "order": 630,
-        "summary": "Logs, metricas, health checks e diagnostico de problemas.",
         "goal": "Document what the system emits at runtime and how to diagnose it when it misbehaves.",
         "outline": """## Logs
-(formato, destinos, niveis, eventos mais uteis)
-## Metricas e tracing
-## Health checks e readiness
-## Modos de falha conhecidos
-(tabela: Sintoma | Causa provavel | Onde verificar | Mitigacao)
-## Diagnostico passo a passo
+(format, destinations, levels, most useful events)
+## Metrics and tracing
+## Health checks and readiness
+## Known failure modes
+(table: Symptom | Likely cause | Where to look | Mitigation)
+## Step-by-step diagnosis
 ## Gaps / Open questions""",
-        "investigate": """- configuracao e chamadas de logging
-- endpoints de health/readiness, exporters de metricas
-- blocos de tratamento de excecoes e o que registam""",
+        "investigate": """- logging configuration and call sites
+- health/readiness endpoints, metrics exporters
+- exception handling blocks and what they record""",
     },
 ]
 
@@ -505,13 +510,14 @@ def build_core_prompt(
     page: dict, scan: RepoScan, config: WikiConfig, graph_context: str = "",
     page_index: str = "",
 ) -> str:
-    # O grafo de cartografia so ajuda nas paginas que falam de estrutura/fluxos.
+    # The cartography graph only helps pages that discuss structure or flows.
     uses_graph = page["key"].startswith(("architecture.", "overview.repository"))
+    t = translator(config.language)
     return _page_prompt(
         config=config,
         context=repo_context(scan, config),
         extra_context=(graph_context if uses_graph else "") + page_index,
-        title=page["title"],
+        title=t(page["title_key"]),
         goal=page["goal"],
         outline=page["outline"],
         investigate=page["investigate"],
@@ -522,31 +528,31 @@ def build_core_prompt(
 CARTOGRAPHY_PAGE = {
     "key": "cartography.reading-the-map",
     "path": "07-cartography/reading-the-map.md",
-    "title": "Cartografia — Como Ler o Mapa",
+    "title_key": "page.reading-the-map.title",
+    "summary_key": "page.reading-the-map.summary",
     "section": "sec.cartography",
     "order": 710,
-    "summary": "Leitura do grafo de dependencias: hubs, camadas, ciclos e riscos.",
     "goal": (
         "Interpret the pre-computed static dependency graph: explain the shape of the "
         "codebase, which files are load-bearing, where the layering holds or breaks, and "
         "what the graph implies for anyone changing this code."
     ),
-    "outline": """## Forma do grafo
-(o que a topologia revela: em camadas? em estrela a volta de um hub? sem estrutura?)
-## Camadas observadas
-(tabela: Camada | Ficheiros representativos | Depende de | E dependida por)
-## Ficheiros criticos
-(tabela: Ficheiro | Porque e critico | Raio de impacto de uma alteracao)
-## Pontos de entrada
-## Ciclos e violacoes de camada
-(cada ciclo do grafo: porque existe, e o que custaria quebra-lo)
-## Ficheiros isolados
-(para cada um: codigo morto, carregamento dinamico, ou entrypoint?)
-## Riscos de manutencao
+    "outline": """## Shape of the graph
+(what the topology reveals: layered? a star around one hub? no structure?)
+## Observed layers
+(table: Layer | Representative files | Depends on | Depended on by)
+## Critical files
+(table: File | Why it is critical | Blast radius of a change)
+## Entrypoints
+## Cycles and layering violations
+(for each cycle in the graph: why it exists, and what breaking it would cost)
+## Orphan files
+(for each: dead code, dynamic loading, or entrypoint?)
+## Maintenance risks
 ## Gaps / Open questions""",
-    "investigate": """- o grafo em `<code_cartography>` ja e verdade verificada: NAO inventes arestas novas
-- le os ficheiros hub e os envolvidos em ciclos para explicar o *porque* de cada ligacao
-- confirma se cada ficheiro isolado e mesmo codigo morto antes de o classificar como tal""",
+    "investigate": """- the graph in `<code_cartography>` is already verified truth: do NOT invent new edges
+- read the hub files and the ones involved in cycles to explain *why* each link exists
+- confirm each orphan really is dead code before classifying it as such""",
 }
 
 
@@ -557,7 +563,7 @@ def build_cartography_prompt(
         config=config,
         context=repo_context(scan, config, tree_entries=120),
         extra_context=graph_context + page_index,
-        title=CARTOGRAPHY_PAGE["title"],
+        title=translator(config.language)("page.reading-the-map.title"),
         goal=CARTOGRAPHY_PAGE["goal"],
         outline=CARTOGRAPHY_PAGE["outline"],
         investigate=CARTOGRAPHY_PAGE["investigate"],
@@ -574,33 +580,33 @@ def build_module_prompt(
         for f in module.files[:80]
     )
     if module.file_count > 80:
-        files += f"\n- ... (+{module.file_count - 80} ficheiros)"
+        files += f"\n- ... (+{module.file_count - 80} files)"
 
-    outline = """## Responsabilidade
-## Ficheiros
-(tabela: Ficheiro | Papel | Linhas)
-## Interface publica
-(o que este modulo expoe a outros modulos: funcoes, classes, tipos, rotas, comandos)
-## Dependencias
-(tabela: Depende de | Tipo (interno/externo) | Para que)
-## Diagrama interno
-(um bloco ```mermaid com `flowchart LR` mostrando os ficheiros/tipos principais e as relacoes entre eles)
-## Fluxos importantes
-## Pontos de atencao
-(armadilhas, estado partilhado, invariantes, TODOs)
+    outline = """## Responsibility
+## Files
+(table: File | Role | Lines)
+## Public interface
+(what this module exposes to other modules: functions, classes, types, routes, commands)
+## Dependencies
+(table: Depends on | Kind (internal/external) | What for)
+## Internal diagram
+(one ```mermaid block with `flowchart LR` showing the main files/types and the relationships between them)
+## Important flows
+## Things to watch out for
+(pitfalls, shared state, invariants, TODOs)
 ## Gaps / Open questions"""
 
-    investigate = f"""- le os ficheiros deste modulo, comecando pelos maiores e pelos `__init__`/`index`/`mod`
-- usa o bloco `<code_cartography>` para preencher a seccao de dependencias com arestas reais
-- procura quem importa este modulo (`Grep` pelo nome do modulo) para inferir a interface publica
-- ficheiros deste modulo:
+    investigate = f"""- read this module's files, starting with the largest and with `__init__`/`index`/`mod`
+- use the `<code_cartography>` block to fill the dependencies section with real edges
+- find who imports this module (`Grep` for the module name) to infer its public interface
+- files in this module:
 {files}"""
 
     return _page_prompt(
         config=config,
         context=repo_context(scan, config, tree_entries=120),
         extra_context=graph_context + page_index,
-        title=f"Modulo: {module.key}",
+        title=translator(config.language)("page.module.title", module=module.key),
         goal=(
             f"Document the module `{module.key}` at a level of detail that lets an engineer "
             "change it safely without reading every file first."
@@ -622,49 +628,54 @@ def build_reference_prompt(
 ) -> str:
     file_list = "\n".join(f"- `{f.rel_path}` ({f.lines} linhas)" for f in files)
     headings = "\n".join(f"## {f.rel_path}" for f in files)
-    part_note = f" (parte {part} de {total_parts})" if total_parts > 1 else ""
+    t = translator(config.language)
+    part_note = (
+        t("page.reference.part", part=part, total=total_parts)
+        if total_parts > 1 else ""
+    )
 
-    outline = f"""## Ambito
-(uma frase mais a lista dos ficheiros cobertos nesta pagina)
+    outline = f"""## Scope
+(one sentence plus the list of files covered on this page)
 
-Depois, exatamente estas {len(files)} seccoes `##`, por esta ordem e com este
-texto exato — nenhuma pode faltar:
+Then exactly these {len(files)} `##` sections, in this order. These headings are FILE
+PATHS: copy them verbatim, never translate them (rule 5 applies to prose headings, not
+to identifiers). None may be missing:
 
 {headings}
 
-Cada uma dessas seccoes de ficheiro leva:
+Each of those file sections carries:
 
-### Proposito
-(1-2 frases)
+### Purpose
+(1-2 sentences)
 
-### Simbolos
-(tabela: Simbolo | Tipo (classe/funcao/const/tipo) | Assinatura | Descricao)
+### Symbols
+(table: Symbol | Kind (class/function/const/type) | Signature | Description)
 
-### Detalhe
-(uma subseccao `#### <nome do simbolo>` por simbolo publico nao-trivial, com:
-assinatura num bloco de codigo, parametros, retorno, excecoes/erros, efeitos
-secundarios, e uma nota de utilizacao quando ajude)
+### Detail
+(one `#### <symbol name>` subsection per non-trivial public symbol, with:
+the signature in a code block, parameters, return value, exceptions/errors, side
+effects, and a usage note where it helps)
 
-### Dependencias
-(imports internos e externos relevantes)
+### Dependencies
+(relevant internal and external imports)
 
-Termina a pagina com:
+End the page with:
 
 ## Gaps / Open questions"""
 
-    investigate = f"""- LE INTEGRALMENTE cada um dos {len(files)} ficheiros seguintes antes de escrever
-- transcreve as assinaturas exatamente como aparecem no codigo (tipos incluidos)
-- documenta simbolos privados/internos apenas quando forem centrais para perceber o ficheiro
-- COBERTURA e o criterio de sucesso desta pagina: e melhor uma seccao curta por
-  ficheiro do que seccoes longas com ficheiros em falta
-- ficheiros a cobrir nesta pagina:
+    investigate = f"""- READ IN FULL each of the following {len(files)} files before writing
+- transcribe signatures exactly as they appear in the code (types included)
+- document private/internal symbols only when they are central to understanding the file
+- COVERAGE is this page's success criterion: a short section per file beats long
+  sections with files missing
+- files to cover on this page:
 {file_list}"""
 
     return _page_prompt(
         config=config,
         context=repo_context(scan, config, tree_entries=80),
         extra_context=page_index,
-        title=f"Referencia: {module.key}{part_note}",
+        title=t("page.reference.title", module=module.key) + part_note,
         goal=(
             "Produce low-level API reference documentation for the listed files: every "
             "public symbol with its exact signature, parameters, return value and side effects."

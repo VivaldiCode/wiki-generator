@@ -478,9 +478,10 @@ included: they are configuration documentation, not secrets.
 - Go packages are directories, not files: an import links to a representative file.
 - No API key required, but it consumes your Claude Code subscription quota.
 
-> Source-code comments and docstrings are in Portuguese. Everything user-facing — CLI
-> output, `--help`, and the deterministically generated wiki pages — is localized: the
-> tool speaks English by default and follows `--language` for the wiki content.
+> The whole codebase is in English: CLI, comments, docstrings and prompts. Wiki content
+> follows `--language` — page titles, index and cartography come from `i18n.py`, and the
+> model renders the outline headings in the target language while leaving identifiers
+> (file paths, symbols) verbatim.
 
 ---
 

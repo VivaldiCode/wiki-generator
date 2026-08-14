@@ -1,4 +1,4 @@
-"""Modelos de dados partilhados entre scanner, planner e generator."""
+"""Data models shared by the scanner, planner and generator."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ class FileInfo:
 
 @dataclass
 class ModuleInfo:
-    key: str  # ex: "src/services"
-    slug: str  # ex: "src-services"
-    title: str  # ex: "src/services"
+    key: str  # e.g. "src/services"
+    slug: str  # e.g. "src-services"
+    title: str  # e.g. "src/services"
     files: list[FileInfo] = field(default_factory=list)
 
     @property
@@ -48,14 +48,14 @@ class RepoScan:
     files: list[FileInfo]
     source_files: list[FileInfo]
     modules: list[ModuleInfo]
-    languages: dict[str, int]  # linguagem -> nº de ficheiros
-    key_files: list[str]  # manifestos, CI, docker, etc.
+    languages: dict[str, int]  # language -> file count
+    key_files: list[str]  # manifests, CI, docker, etc.
     entrypoints: list[str]
     doc_files: list[str]
     test_files: list[str]
-    manifest_excerpts: dict[str, str]  # caminho -> conteudo truncado
+    manifest_excerpts: dict[str, str]  # path -> truncated contents
     is_git_repo: bool
-    sensitive_skipped: list[str]  # ficheiros com aspeto de credenciais, excluidos
+    sensitive_skipped: list[str]  # credential-looking files that were excluded
 
     @property
     def total_lines(self) -> int:
@@ -68,17 +68,17 @@ class RepoScan:
 
 @dataclass
 class PageSpec:
-    key: str  # id estavel, usado no manifesto de cache
-    path: str  # caminho relativo dentro da wiki, ex "02-architecture/overview.md"
+    key: str  # stable id, used in the cache manifest
+    path: str  # path relative to the wiki root, e.g. "02-architecture/overview.md"
     title: str
-    section: str  # seccao do indice
+    section: str  # index section key
     kind: str  # overview|architecture|module|reference|guide|operations
     order: int
     prompt: str
     scope_files: list[str] = field(default_factory=list)
-    summary: str = ""  # descricao curta usada no indice
-    # Strings que tem obrigatoriamente de aparecer na pagina gerada. Se faltarem,
-    # o gerador repete a chamada a exigir explicitamente o que ficou de fora.
+    summary: str = ""  # short description used in the index
+    # Strings that must appear in the generated page. If any is missing, the
+    # generator repeats the call demanding explicitly what was left out.
     required_markers: list[str] = field(default_factory=list)
 
 

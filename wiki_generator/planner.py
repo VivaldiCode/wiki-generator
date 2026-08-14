@@ -1,4 +1,4 @@
-"""Transforma o scan do repositorio no plano de paginas da wiki."""
+"""Turns the repository scan into the wiki page plan."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from .prompts import (
     build_reference_prompt,
     wiki_pages_block,
 )
+from .i18n import translator
 from .utils import chunked
 
 # Canonical section keys, resolved to text by `i18n` at render time.
@@ -30,25 +31,26 @@ SECTION_ORDER = [
 def build_plan(
     scan: RepoScan, config: WikiConfig, graph_context: str = ""
 ) -> list[PageSpec]:
+    t = translator(config.language)
     specs: list[PageSpec] = []
     all_files = [f.rel_path for f in scan.files]
-    # 1ª passagem: so os metadados, para saber que paginas vao existir.
-    # 2ª passagem (no fim): os prompts, ja com o indice do vault.
+    # 1st pass: metadata only, so we know which pages will exist.
+    # 2nd pass (at the end): the prompts, now carrying the vault index.
     prompt_builders: list = []
 
-    # --- paginas fixas -------------------------------------------------
+    # --- fixed pages ---------------------------------------------------
     for page in CORE_PAGES:
         specs.append(
             PageSpec(
                 key=page["key"],
                 path=page["path"],
-                title=page["title"],
+                title=t(page["title_key"]),
                 section=page["section"],
                 kind=page["path"].split("/", 1)[0],
                 order=page["order"],
-                summary=page["summary"],
+                summary=t(page["summary_key"]),
                 prompt="",
-                # As paginas transversais dependem de todo o repositorio.
+                # Cross-cutting pages depend on the whole repository.
                 scope_files=all_files,
             )
         )
@@ -56,19 +58,21 @@ def build_plan(
             lambda index, page=page: build_core_prompt(page, scan, config, graph_context, index)
         )
 
-    # --- uma pagina por modulo ----------------------------------------
+    # --- one page per module -------------------------------------------
     for index, module in enumerate(scan.modules):
         specs.append(
             PageSpec(
                 key=f"module.{module.slug}",
                 path=f"03-modules/{module.slug}.md",
-                title=f"Modulo: {module.key}",
+                title=t("page.module.title", module=module.key),
                 section="sec.modules",
                 kind="module",
                 order=310 + index,
-                summary=(
-                    f"{module.file_count} ficheiros, {module.total_lines} linhas — "
-                    f"{', '.join(module.languages[:3]) or 'n/d'}"
+                summary=t(
+                    "page.module.summary",
+                    files=module.file_count,
+                    lines=module.total_lines,
+                    languages=", ".join(module.languages[:3]) or "n/a",
                 ),
                 prompt="",
                 scope_files=[f.rel_path for f in module.files],
@@ -80,7 +84,7 @@ def build_plan(
             )
         )
 
-    # --- referencia de baixo nivel, em partes por modulo ---------------
+    # --- low-level reference, split into parts per module --------------
     if config.include_reference:
         reference_pages = 0
         for module_index, module in enumerate(scan.modules):
@@ -90,13 +94,14 @@ def build_plan(
                     break
                 suffix = f"-{part_index}" if len(groups) > 1 else ""
                 title_suffix = (
-                    f" (parte {part_index} de {len(groups)})" if len(groups) > 1 else ""
+                    t("page.reference.part", part=part_index, total=len(groups))
+                    if len(groups) > 1 else ""
                 )
                 specs.append(
                     PageSpec(
                         key=f"reference.{module.slug}{suffix}",
                         path=f"04-reference/{module.slug}{suffix}.md",
-                        title=f"Referencia: {module.key}{title_suffix}",
+                        title=t("page.reference.title", module=module.key) + title_suffix,
                         section="sec.reference",
                         kind="reference",
                         order=410 + module_index * 10 + part_index,
@@ -104,7 +109,7 @@ def build_plan(
                         + (f" (+{len(group) - 5})" if len(group) > 5 else ""),
                         prompt="",
                         scope_files=[f.rel_path for f in group],
-                        # Cada ficheiro do lote tem de ter a sua propria seccao.
+                        # Every file in the batch must get its own section.
                         required_markers=[f"## {f.rel_path}" for f in group],
                     )
                 )
@@ -118,17 +123,17 @@ def build_plan(
             if reference_pages >= config.max_reference_pages:
                 break
 
-    # --- leitura interpretativa do grafo de cartografia -----------------
+    # --- interpretive reading of the cartography graph -----------------
     if graph_context:
         specs.append(
             PageSpec(
                 key=CARTOGRAPHY_PAGE["key"],
                 path=CARTOGRAPHY_PAGE["path"],
-                title=CARTOGRAPHY_PAGE["title"],
+                title=t(CARTOGRAPHY_PAGE["title_key"]),
                 section=CARTOGRAPHY_PAGE["section"],
                 kind="cartography",
                 order=CARTOGRAPHY_PAGE["order"],
-                summary=CARTOGRAPHY_PAGE["summary"],
+                summary=t(CARTOGRAPHY_PAGE["summary_key"]),
                 prompt="",
                 scope_files=all_files,
             )
@@ -137,8 +142,8 @@ def build_plan(
             lambda index: build_cartography_prompt(scan, config, graph_context, index)
         )
 
-    # 2ª passagem: agora que todas as paginas sao conhecidas, constroi os prompts
-    # com o indice do vault, para o modelo nao inventar destinos de wikilink.
+    # 2nd pass: now that every page is known, build the prompts with the vault
+    # index, so the model cannot invent wikilink targets.
     page_index = wiki_pages_block(
         [(spec.path[:-3], spec.title) for spec in specs]
         + [("07-cartography/file-graph", "Cartografia — Grafo de Ficheiros"),

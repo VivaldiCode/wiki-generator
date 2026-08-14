@@ -1,4 +1,4 @@
-"""Helpers puros (sem I/O de rede, sem estado global)."""
+"""Pure helpers (no network I/O, no global state)."""
 
 from __future__ import annotations
 
@@ -10,19 +10,19 @@ from pathlib import Path
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 _FENCE_START = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n")
 _FENCE_END = re.compile(r"\n\s*```\s*$")
-# `[texto](destino.md)` — nao apanha imagens `![...](...)`
+# `[text](target.md)` — does not match images `![...](...)`
 _MD_LINK = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)\s]+\.md(?:#[^)\s]*)?)\)")
 
 
 def slugify(value: str, max_len: int = 60) -> str:
-    """Converte um caminho/titulo num slug estavel usavel como nome de ficheiro."""
+    """Turn a path or title into a stable slug usable as a filename."""
     normalized = unicodedata.normalize("NFKD", value)
     ascii_only = normalized.encode("ascii", "ignore").decode("ascii").lower()
     slug = _SLUG_STRIP.sub("-", ascii_only).strip("-")
     if not slug:
         slug = "item"
     if len(slug) > max_len:
-        # Mantem o inicio legivel e junta um sufixo determinista para evitar colisoes.
+        # Keep the start readable and add a deterministic suffix to avoid collisions.
         digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:6]
         slug = f"{slug[: max_len - 7].rstrip('-')}-{digest}"
     return slug
@@ -33,7 +33,7 @@ def sha1_text(text: str) -> str:
 
 
 def sha1_file(path: Path, max_bytes: int = 2_000_000) -> str:
-    """Hash do conteudo do ficheiro (truncado) — usado para deteccao de alteracoes."""
+    """Hash of the (truncated) file contents — used for change detection."""
     digest = hashlib.sha1()
     try:
         with path.open("rb") as handle:
@@ -49,7 +49,7 @@ def read_text(path: Path, max_chars: int | None = None) -> str:
     except OSError:
         return ""
     if max_chars is not None and len(text) > max_chars:
-        return text[:max_chars] + "\n... [truncado]"
+        return text[:max_chars] + "\n... [truncated]"
     return text
 
 
@@ -63,10 +63,10 @@ def human_size(num_bytes: int) -> str:
 
 
 def strip_code_fence(text: str) -> str:
-    """Remove uma cerca ```markdown ... ``` que envolva a resposta inteira.
+    """Strip a ```markdown ... ``` fence wrapping the entire response.
 
-    So remove quando a cerca abre na primeira linha e fecha na ultima — caso
-    contrario seria destrutivo para paginas que legitimamente comecam com codigo.
+    Only strips when the fence opens on the first line and closes on the last —
+    otherwise it would be destructive to pages that legitimately start with code.
     """
     stripped = text.strip()
     if not stripped.startswith("```"):
@@ -90,11 +90,11 @@ _PREAMBLE_OPENERS = (
 
 
 def trim_preamble(markdown: str, max_lookahead: int = 20) -> str:
-    """Remove comentario meta que o modelo escreva antes do inicio real da pagina.
+    """Drop meta-commentary the model writes before the page actually starts.
 
-    Se existir um H1 nas primeiras linhas, tudo antes dele e preambulo. Caso
-    contrario, remove no maximo as linhas iniciais que abrem com uma formula
-    tipica de narracao — conservador de proposito, para nao comer conteudo.
+    If there is an H1 in the first lines, everything before it is preamble.
+    Otherwise it drops at most the leading lines opening with a typical narration
+    formula — deliberately conservative, so it never eats real content.
     """
     lines = markdown.lstrip().splitlines()
     if not lines:
@@ -116,7 +116,7 @@ def trim_preamble(markdown: str, max_lookahead: int = 20) -> str:
 
 
 def dedupe_leading_heading(markdown: str) -> str:
-    """Colapsa dois H1 identicos consecutivos no topo da pagina."""
+    """Collapse two identical consecutive H1s at the top of the page."""
     lines = markdown.splitlines()
     heads = [i for i, line in enumerate(lines[:6]) if line.startswith("# ")]
     if len(heads) >= 2 and lines[heads[0]].strip() == lines[heads[1]].strip():
@@ -126,7 +126,7 @@ def dedupe_leading_heading(markdown: str) -> str:
 
 
 def ensure_heading(markdown: str, title: str) -> str:
-    """Garante que a pagina comeca com um H1 (padroniza a wiki)."""
+    """Ensure the page starts with an H1 (keeps the wiki uniform)."""
     text = markdown.lstrip()
     for line in text.splitlines():
         if not line.strip():
@@ -138,7 +138,7 @@ def ensure_heading(markdown: str, title: str) -> str:
 
 
 def render_tree(paths: list[str], max_entries: int = 400) -> str:
-    """Renderiza uma arvore de diretorios ASCII a partir de caminhos relativos."""
+    """Render an ASCII directory tree from relative paths."""
     tree: dict = {}
     for rel in sorted(paths):
         node = tree
@@ -164,18 +164,18 @@ def render_tree(paths: list[str], max_entries: int = 400) -> str:
 
     walk(tree, "")
     if truncated:
-        lines.append("... [arvore truncada]")
+        lines.append("... [tree truncated]")
     return "\n".join(lines)
 
 
 def wikilink(target: str, display: str | None = None, *, in_table: bool = False) -> str:
-    """Link no estilo Obsidian: `[[caminho]]` ou `[[caminho|texto]]`.
+    """Obsidian-style link: `[[path]]` or `[[path|text]]`.
 
-    `target` e o caminho a partir da raiz da wiki; a extensao `.md` e removida
-    porque o Obsidian resolve as notas sem ela.
+    `target` is the path from the wiki root; the `.md` extension is stripped
+    because Obsidian resolves notes without it.
 
-    Dentro de uma tabela markdown o `|` do alias fecharia a celula, por isso tem
-    de ser escapado — o Obsidian aceita `\\|` no interior de um wikilink.
+    Inside a Markdown table the alias pipe would close the cell, so it has to be
+    escaped — Obsidian accepts `\\|` inside a wikilink.
     """
     target = target[:-3] if target.endswith(".md") else target
     if not display or display == target:
@@ -185,10 +185,10 @@ def wikilink(target: str, display: str | None = None, *, in_table: bool = False)
 
 
 def markdown_links_to_wikilinks(text: str, base_dir: str = "") -> str:
-    """Converte `[texto](caminho.md)` em `[[caminho|texto]]`.
+    """Convert `[text](path.md)` into `[[path|text]]`.
 
-    `base_dir` e o diretorio da pagina, para resolver caminhos relativos contra
-    a raiz da wiki. Links externos (http, mailto) ficam intactos.
+    `base_dir` is the page's directory, used to resolve relative paths against
+    the wiki root. External links (http, mailto) are left untouched.
     """
 
     def replace(match: re.Match) -> str:
@@ -223,8 +223,8 @@ def bullet_list(items: list[str], limit: int = 60) -> str:
     shown = items[:limit]
     lines = [f"- {item}" for item in shown]
     if len(items) > limit:
-        lines.append(f"- ... (+{len(items) - limit} mais)")
-    return "\n".join(lines) if lines else "- (nenhum)"
+        lines.append(f"- ... (+{len(items) - limit} more)")
+    return "\n".join(lines) if lines else "- (none)"
 
 
 def chunked(items: list, size: int) -> list[list]:

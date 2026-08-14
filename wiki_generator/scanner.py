@@ -1,4 +1,4 @@
-"""Analise estatica do repositorio — nao usa o modelo, so filesystem/git."""
+"""Static repository analysis — no model involved, only filesystem and git."""
 
 from __future__ import annotations
 
@@ -20,26 +20,26 @@ IGNORE_DIRS = {
     ".wrangler", ".vercel", ".netlify", ".serverless", ".output", ".angular",
 }
 
-# Sequencias de diretorios a ignorar. Ao contrario de IGNORE_DIRS, dependem do
-# contexto: `worktrees/` isolado pode ser legitimo, `.claude/worktrees/` sao
-# copias completas do repositorio feitas pelo Claude Code — documenta-las
-# duplicaria o repositorio inteiro N vezes.
+# Directory sequences to ignore. Unlike IGNORE_DIRS these are context-dependent:
+# a bare `worktrees/` may be legitimate, while `.claude/worktrees/` holds full
+# repository copies made by Claude Code — documenting them would duplicate the
+# whole repository N times over.
 IGNORE_PATH_FRAGMENTS = (
     "/.claude/worktrees/",
     "/.git/worktrees/",
 )
 
-# Diretorios de output gerado cujo nome varia por sufixo
-# (ex: `playwright-report`, `playwright-report-smoke`, `test-results-e2e`).
+# Generated-output directories whose name varies by suffix
+# (e.g. `playwright-report`, `playwright-report-smoke`, `test-results-e2e`).
 IGNORE_DIR_PREFIXES = (
     "playwright-report", "test-results", "allure-report", "cypress/screenshots",
     "cypress/videos", "storybook-static",
 )
 
-# Ficheiros que parecem credenciais. Sao excluidos do scan por omissao: o
-# gerador da a um modelo acesso de leitura ao repositorio e escreve documentacao
-# a partir dele, por isso nada deve apontar para segredos. A exclusao e
-# reportada ao utilizador em vez de silenciosa.
+# Credential-looking files. Excluded from the scan by default: the generator
+# gives a model read access to the repository and writes documentation from it,
+# so nothing should point at secrets. The exclusion is reported to the user
+# rather than being silent.
 SENSITIVE_PATTERNS = (
     "*service-account*.json", "*serviceaccount*.json", "*-adminsdk-*.json",
     "*credentials*.json", "*client_secret*.json", "*.pem", "*.p12", "*.pfx",
@@ -47,8 +47,8 @@ SENSITIVE_PATTERNS = (
     ".env", ".env.*",
 )
 
-# Ficheiros que casam com os padroes acima mas sao documentacao de configuracao,
-# nao segredos — sao exatamente o que a pagina de configuracao precisa de ler.
+# Files matching the patterns above that are configuration documentation rather
+# than secrets — exactly what the configuration page needs to read.
 SENSITIVE_ALLOWLIST = {
     ".env.example", ".env.sample", ".env.template", ".env.dist", ".env.defaults",
 }
@@ -86,7 +86,7 @@ LANGUAGE_BY_EXT = {
     ".md": "Markdown", ".mdx": "Markdown", ".rst": "reStructuredText",
 }
 
-# Extensoes que contam como "codigo-fonte" para efeitos de modulos/referencia.
+# Extensions that count as "source code" for module and reference purposes.
 SOURCE_LANGUAGES = {
     "Python", "TypeScript", "JavaScript", "Go", "Rust", "Java", "Kotlin", "Ruby",
     "PHP", "C#", "F#", "C", "C++", "Swift", "Objective-C", "Objective-C++",
@@ -105,7 +105,7 @@ KEY_FILE_NAMES = {
     "CHANGELOG.md", "LICENSE", "CLAUDE.md", "AGENTS.md",
 }
 
-# Manifestos cujo conteudo vale a pena passar ao modelo diretamente.
+# Manifests whose contents are worth passing to the model directly.
 MANIFEST_FILES = {
     "package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml",
     "pom.xml", "build.gradle", "build.gradle.kts", "Gemfile", "composer.json",
@@ -125,11 +125,11 @@ DOC_MARKERS = ("docs", "doc", "documentation", "wiki")
 
 # ----------------------------------------------------------------------
 def find_repositories(root: Path, max_depth: int = 3) -> list[Path]:
-    """Descobre os repositorios git sob `root`.
+    """Discover the git repositories under `root`.
 
-    Se `root` for ele proprio um repositorio, devolve-o sozinho — e um repo, uma
-    wiki. Caso contrario procura repositorios-filho, para que uma pasta que
-    agrega varios projetos gere uma wiki por projeto em vez de uma so misturada.
+    If `root` is itself a repository it is returned alone — one repo, one wiki.
+    Otherwise child repositories are searched for, so that a folder aggregating
+    several projects yields one wiki per project instead of a single mixed one.
     """
     root = Path(root)
     if (root / ".git").exists():
@@ -148,7 +148,7 @@ def find_repositories(root: Path, max_depth: int = 3) -> list[Path]:
             if entry.name in IGNORE_DIRS:
                 continue
             if (entry / ".git").exists():
-                found.append(entry)  # nao desce: subrepos ficam com o pai
+                found.append(entry)  # do not descend: sub-repos stay with the parent
                 continue
             walk(entry, depth + 1)
 
@@ -157,7 +157,7 @@ def find_repositories(root: Path, max_depth: int = 3) -> list[Path]:
 
 
 def _git_files(repo: Path) -> list[str] | None:
-    """Lista ficheiros via git (respeita .gitignore). None se nao for repo git."""
+    """List files via git (honours .gitignore). None if this is not a git repo."""
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo), "ls-files", "--cached", "--others",
@@ -184,9 +184,9 @@ def _walk_files(repo: Path) -> list[str]:
 
 
 def _output_prefix(config: WikiConfig) -> str | None:
-    """Prefixo relativo da wiki quando esta e escrita dentro do proprio repositorio.
+    """Relative prefix of the wiki when it is written inside the repository itself.
 
-    Sem isto, uma segunda corrida documentaria a saida da primeira.
+    Without this, a second run would document the output of the first.
     """
     try:
         relative = config.output_path.relative_to(config.repo_path)
@@ -240,10 +240,10 @@ def _language_for(rel: str) -> str:
 
 # ----------------------------------------------------------------------
 def _build_modules(source_files: list[FileInfo], config: WikiConfig) -> list[ModuleInfo]:
-    """Agrupa ficheiros-fonte em modulos por prefixo de diretorio.
+    """Group source files into modules by directory prefix.
 
-    Modulos abaixo do minimo sao promovidos ao diretorio-pai ate atingirem o
-    minimo ou chegarem a raiz — evita centenas de paginas de um ficheiro so.
+    Modules below the minimum are promoted to the parent directory until they
+    reach it or hit the root — this avoids hundreds of one-file pages.
     """
     depth = max(1, config.module_depth)
 
@@ -343,7 +343,7 @@ def scan_repo(config: WikiConfig) -> RepoScan:
         return parts[0] in DOC_MARKERS or rel.lower().endswith((".md", ".mdx", ".rst"))
 
     source_files = [f for f in files if f.is_source and not is_test(f.rel_path)]
-    if not source_files:  # repos so de testes/docs: nao deixar a wiki vazia
+    if not source_files:  # test/docs-only repos: do not leave the wiki empty
         source_files = [f for f in files if f.is_source] or files
 
     languages: dict[str, int] = {}

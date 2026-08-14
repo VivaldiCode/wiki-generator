@@ -1,7 +1,8 @@
-"""Wrapper assincrono sobre o CLI `claude` em modo headless (-p).
+"""Async wrapper around the `claude` CLI in headless mode (-p).
 
-Usa a subscricao ja autenticada no CLI: nao le nem exige ANTHROPIC_API_KEY.
-O prompt vai por stdin (evita limites de argv) e a resposta vem em JSON.
+Uses the subscription already authenticated in the CLI: it neither reads nor
+requires ANTHROPIC_API_KEY. The prompt goes over stdin (avoiding argv limits)
+and the response comes back as JSON.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ def ensure_cli_available(config: WikiConfig) -> str:
 
 
 class ClaudeRunner:
-    """Executa prompts contra o CLI, com concorrencia limitada e retries."""
+    """Runs prompts against the CLI, with bounded concurrency and retries."""
 
     def __init__(self, config: WikiConfig) -> None:
         self.config = config
@@ -68,13 +69,13 @@ class ClaudeRunner:
         if config.max_budget_usd is not None:
             argv += ["--max-budget-usd", str(config.max_budget_usd)]
         if config.isolated:
-            # Sem servidores MCP e sem skills: geracao deterministica e mais barata.
+            # No MCP servers and no skills: deterministic and cheaper generation.
             argv += ["--strict-mcp-config", "--disable-slash-commands"]
         return argv
 
     def _env(self) -> dict[str, str]:
         env = dict(os.environ)
-        # Marcador util para hooks/telemetria do lado do utilizador.
+        # Useful marker for user-side hooks and telemetry.
         env["WIKI_GENERATOR"] = "1"
         return env
 
@@ -146,10 +147,10 @@ class ClaudeRunner:
         self, log_name: str | None, attempt: int, argv: list[str], prompt: str,
         system_prompt: str, stdout_text: str, stderr_text: str, returncode: int | None,
     ) -> None:
-        """Grava a chamada completa quando --log-dir esta ligado.
+        """Record the full call when --log-dir is on.
 
-        Guarda o que foi enviado e o que voltou, em bruto: sem isto, uma pagina
-        que sai errada nao tem forma de ser investigada depois.
+        Stores what was sent and what came back, raw: without this, a page that
+        comes out wrong has no way of being investigated afterwards.
         """
         if not self.config.log_dir or not log_name:
             return
@@ -164,7 +165,7 @@ class ClaudeRunner:
                         "page": log_name,
                         "attempt": attempt,
                         "returncode": returncode,
-                        # argv sem o binario, para nao gravar caminhos da maquina
+                        # argv without the binary, to avoid recording machine paths
                         "argv": argv[1:],
                         "system_prompt": system_prompt,
                         "prompt": prompt,
@@ -177,7 +178,7 @@ class ClaudeRunner:
                 encoding="utf-8",
             )
         except OSError:
-            pass  # o log e um extra de debug: nunca deve derrubar a geracao
+            pass  # the log is a debug extra: it must never break generation
 
 
 # ----------------------------------------------------------------------
@@ -188,7 +189,7 @@ def _parse_json_output(raw: str) -> ClaudeResponse:
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        # Fallback: o CLI pode ter escrito ruido antes do JSON — tenta a ultima linha.
+        # Fallback: the CLI may have written noise before the JSON — try the last line.
         for line in reversed(raw.splitlines()):
             line = line.strip()
             if line.startswith("{"):

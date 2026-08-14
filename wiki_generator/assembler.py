@@ -97,7 +97,7 @@ def write_index(
 
 # ----------------------------------------------------------------------
 def write_summary(config: WikiConfig, results: list[PageResult]) -> Path:
-    """SUMMARY.md — indice linear, util como nota de entrada num vault."""
+    """SUMMARY.md — linear index, useful as an entry note in a vault."""
     t = translator(config.language)
     grouped = _group_by_section([r for r in results if r.ok])
     lines = [f"# {t('summary.title')}", "", f"- {wikilink('README', t('summary.index'))}", ""]

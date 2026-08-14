@@ -1,12 +1,12 @@
-"""Verificacao das citacoes `ficheiro:linha` contra o repositorio.
+"""Verification of `file:line` citations against the repository.
 
-Depois de as afirmacoes inventadas serem eliminadas, o erro que sobra e a citacao
-desalinhada. Parte dela e mecanicamente detetavel: um ficheiro que nao existe, ou
-uma linha para la do fim do ficheiro, sao errados sem ambiguidade.
+Once invented claims are eliminated, the error that remains is the misaligned
+citation. Part of it is mechanically detectable: a file that does not exist, or a
+line past the end of the file, are unambiguously wrong.
 
-Limite honesto: uma citacao que aponte para uma linha existente mas errada (o caso
-mais comum, `pubspec.yaml:62` quando e `:41`) nao e detetavel sem verificacao
-semantica — este modulo nao a apanha e nao finge apanhar.
+Honest limit: a citation pointing at an existing but wrong line (the most common
+case, `pubspec.yaml:62` when it is `:41`) is not detectable without semantic
+verification — this module does not catch it and does not pretend to.
 """
 
 from __future__ import annotations
@@ -14,23 +14,23 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-# `caminho/ficheiro.ext:123` dentro de codigo inline, que e como os prompts
-# mandam escrever as referencias.
+# `path/file.ext:123` inside inline code, which is how the prompts instruct
+# references to be written.
 CITATION = re.compile(r"`([\w./\-]+\.[A-Za-z0-9]{1,10}):(\d+)(?:-(\d+))?`")
 
 
 def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None) -> dict:
-    """Confronta cada citacao com o ficheiro real. Nao altera nada.
+    """Check each citation against the real file. Changes nothing.
 
-    Distingue um caminho inventado de um caminho apenas mal enraizado: se o
-    sufixo citado corresponder a exatamente um ficheiro do repositorio, o
-    ficheiro existe e o que falta e o prefixo — outro problema, outra correcao.
+    Distinguishes an invented path from a merely unrooted one: if the cited
+    suffix matches exactly one file in the repository, the file exists and what
+    is missing is the prefix — a different problem with a different fix.
     """
     known = repo_files
     if known is None:
-        # Fallback: sem a lista do scan, varre o repositorio aplicando os mesmos
-        # filtros — caso contrario `node_modules` e worktrees produzem dezenas de
-        # candidatos falsos para o mesmo sufixo.
+        # Fallback: without the scan list, walk the repository applying the same
+        # filters — otherwise `node_modules` and worktrees produce dozens of false
+        # candidates for the same suffix.
         from .scanner import IGNORE_DIRS, IGNORE_PATH_FRAGMENTS
 
         known = []
@@ -71,8 +71,8 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
         page_rel = str(page.relative_to(wiki_root))
         for match in CITATION.finditer(page.read_text(encoding="utf-8")):
             rel, start, end = match.group(1), int(match.group(2)), match.group(3)
-            # So conta como citacao se o caminho existir no repositorio ou
-            # parecer um caminho de codigo — evita apanhar `versao:1.2` e afins.
+            # Only counts as a citation if the path exists in the repository or
+            # looks like a code path — avoids matching `version:1.2` and similar.
             if "/" not in rel and not (repo_root / rel).exists():
                 continue
             total += 1

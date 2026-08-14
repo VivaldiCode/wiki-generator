@@ -1,4 +1,4 @@
-"""Configuracao da geracao da wiki."""
+"""Wiki generation configuration."""
 
 from __future__ import annotations
 
@@ -6,17 +6,17 @@ import json
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-# Modelos "simples" primeiro — o default do projeto e o mais barato/rapido.
+# Simple models first — the project default is the cheapest and fastest.
 DEFAULT_MODEL = "haiku"
 
 
 @dataclass
 class WikiConfig:
-    # --- alvos ---
+    # --- targets ---
     repo_path: Path
     output_path: Path
 
-    # --- modelo / execucao ---
+    # --- model / execution ---
     model: str = DEFAULT_MODEL
     fallback_model: str | None = None
     concurrency: int = 4
@@ -29,12 +29,12 @@ class WikiConfig:
     claude_bin: str = "claude"
     log_dir: Path | None = None
 
-    # --- conteudo ---
+    # --- content ---
     language: str = "en"
     project_name: str | None = None
     audience: str = "engineers who will work on this repository"
 
-    # --- estrutura / scan ---
+    # --- structure / scan ---
     module_depth: int = 2
     min_files_per_module: int = 2
     max_modules: int = 25
@@ -45,13 +45,13 @@ class WikiConfig:
     include_globs: tuple[str, ...] = ()
     exclude_globs: tuple[str, ...] = ()
 
-    # --- comportamento ---
+    # --- behaviour ---
     force: bool = False
     dry_run: bool = False
     only: tuple[str, ...] = ()
     verbose: bool = False
 
-    # preenchido em runtime, nao vem do ficheiro de config
+    # filled at runtime; never read from the config file
     extra: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -82,7 +82,7 @@ class WikiConfig:
         return data
 
     def fingerprint_fields(self) -> dict:
-        """Subconjunto de opcoes que, ao mudar, deve invalidar o cache das paginas."""
+        """Options whose change must invalidate the page cache."""
         return {
             "model": self.model,
             "language": self.language,

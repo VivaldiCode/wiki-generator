@@ -1,8 +1,8 @@
-"""Code cartography: grafo estatico de dependencias ficheiro-a-ficheiro.
+"""Code cartography: static file-to-file dependency graph.
 
-Extrai imports/includes/requires por linguagem e resolve-os para ficheiros reais
-do repositorio. E deterministico e completo — nao passa pelo modelo — porque um
-grafo de ligacoes so vale se todas as arestas forem verdadeiras.
+Extracts imports/includes/requires per language and resolves them to real files
+in the repository. It is deterministic and complete — the model is never involved —
+because a link graph is only worth anything if every edge is true.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from .i18n import Translator, translator
 from .utils import chunked, read_text, slugify, wikilink
 
 # ----------------------------------------------------------------------
-# Extracao de especificadores de import por linguagem
+# Import-specifier extraction per language
 # ----------------------------------------------------------------------
 PATTERNS: dict[str, list[re.Pattern]] = {
     "Python": [
@@ -34,7 +34,7 @@ PATTERNS: dict[str, list[re.Pattern]] = {
     ],
     "Go": [
         re.compile(r'^\s*import\s+"([^"]+)"', re.M),
-        re.compile(r'^\s*(?:[\w.]+\s+)?"([^"]+)"\s*$', re.M),  # dentro de import ( ... )
+        re.compile(r'^\s*(?:[\w.]+\s+)?"([^"]+)"\s*$', re.M),  # inside import ( ... )
     ],
     "Java": [re.compile(r"^\s*import\s+(?:static\s+)?([\w.]+)\s*;", re.M)],
     "C": [re.compile(r'^\s*#\s*include\s+["<]([^">]+)[">]', re.M)],
@@ -61,7 +61,7 @@ LANGUAGES_WITHOUT_EXTRACTOR = {
     "SQL", "GraphQL", "Protobuf", "Terraform",
 }
 
-# Linguagens que partilham o mesmo extrator
+# Languages sharing the same extractor
 LANGUAGE_ALIASES = {
     "TypeScript": "JavaScript",
     "Vue": "JavaScript",
@@ -73,7 +73,7 @@ LANGUAGE_ALIASES = {
     "Objective-C++": "C",
 }
 
-# Extensoes tentadas ao resolver um caminho sem extensao (estilo JS/TS)
+# Extensions tried when resolving an extensionless path (JS/TS style)
 RESOLVE_EXTENSIONS = (
     "", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".vue", ".svelte",
     ".py", ".go", ".rb", ".php",
@@ -85,9 +85,9 @@ RESOLVE_INDEXES = (
 
 MAX_SCAN_BYTES = 300_000
 
-# Limites de legibilidade das paginas de cartografia de repositorios grandes.
-MODULE_PAGE_MAX_FILES = 180  # ficheiros por pagina de modulo antes de dividir em partes
-NEIGHBOUR_CAP = 120  # vizinhos de outros modulos desenhados no diagrama
+# Readability limits for the cartography pages of large repositories.
+MODULE_PAGE_MAX_FILES = 180  # files per module page before splitting into parts
+NEIGHBOUR_CAP = 120  # neighbours from other modules drawn in the diagram
 
 
 @dataclass
@@ -101,14 +101,14 @@ class GraphNode:
 @dataclass
 class CodeGraph:
     nodes: dict[str, GraphNode] = field(default_factory=dict)
-    edges: set[tuple[str, str]] = field(default_factory=set)  # (origem, destino)
-    external: dict[str, int] = field(default_factory=dict)  # pacote -> nº de imports
-    unresolved: dict[str, list[str]] = field(default_factory=dict)  # ficheiro -> specs
-    # Linguagens presentes no repositorio para as quais nao ha extrator de
-    # imports: os seus ficheiros aparecem no grafo sem nenhuma aresta.
+    edges: set[tuple[str, str]] = field(default_factory=set)  # (source, target)
+    external: dict[str, int] = field(default_factory=dict)  # package -> import count
+    unresolved: dict[str, list[str]] = field(default_factory=dict)  # file -> specs
+    # Languages present in the repository with no import extractor: their files
+    # appear in the graph without any edges.
     languages_without_extractor: list[str] = field(default_factory=list)
 
-    # -- metricas -------------------------------------------------------
+    # -- metrics --------------------------------------------------------
     @property
     def out_degree(self) -> dict[str, int]:
         counts: dict[str, int] = defaultdict(int)
@@ -124,12 +124,12 @@ class CodeGraph:
         return counts
 
     def orphans(self) -> list[str]:
-        """Ficheiros sem arestas em nenhuma direcao."""
+        """Files with no edges in either direction."""
         touched = {n for edge in self.edges for n in edge}
         return sorted(set(self.nodes) - touched)
 
     def entry_candidates(self) -> list[str]:
-        """Ficheiros que importam outros mas que ninguem importa."""
+        """Files that import others but that nobody imports."""
         incoming = self.in_degree
         outgoing = self.out_degree
         return sorted(
@@ -138,14 +138,14 @@ class CodeGraph:
         )
 
     def cycles(self, limit: int = 25) -> list[list[str]]:
-        """Ciclos de dependencia (DFS iterativo com pilha de caminho)."""
+        """Dependency cycles (iterative DFS with a path stack)."""
         adjacency: dict[str, list[str]] = defaultdict(list)
         for src, dst in sorted(self.edges):
             adjacency[src].append(dst)
 
         found: list[list[str]] = []
         seen_signatures: set[tuple[str, ...]] = set()
-        color: dict[str, int] = {}  # 0=nao visitado, 1=em progresso, 2=terminado
+        color: dict[str, int] = {}  # 0=unvisited, 1=in progress, 2=done
 
         for start in sorted(self.nodes):
             if color.get(start, 0) != 0:
@@ -196,7 +196,7 @@ def _extract_specs(text: str, language: str) -> list[str]:
 
 
 class _Resolver:
-    """Resolve especificadores de import para caminhos reais do repositorio."""
+    """Resolves import specifiers to real repository paths."""
 
     def __init__(self, scan: RepoScan, repo: Path) -> None:
         self.repo = repo
@@ -231,7 +231,7 @@ class _Resolver:
         return None
 
     def _expand(self, base: str) -> list[str]:
-        """Gera candidatos para um caminho sem extensao (ficheiro ou index)."""
+        """Generate candidates for an extensionless path (file or index)."""
         options = [base + ext for ext in RESOLVE_EXTENSIONS]
         options += [f"{base}/{index}" for index in RESOLVE_INDEXES]
         return options
@@ -243,7 +243,7 @@ class _Resolver:
         if source_dir == ".":
             source_dir = ""
 
-        # Caminhos relativos: comuns a JS/TS, Ruby, PHP, C, Shell.
+        # Relative paths: common to JS/TS, Ruby, PHP, C, Shell.
         if spec.startswith((".", "/")) and key != "Python":
             base = str((Path(source_dir) / spec).resolve().relative_to(Path("/").resolve())) \
                 if spec.startswith("/") else str(Path(source_dir) / spec)
@@ -263,7 +263,7 @@ class _Resolver:
         if key == "Rust":
             return self._resolve_rust(source, source_dir, spec)
         if key == "C#":
-            return None  # namespaces C# nao mapeiam para ficheiros de forma fiavel
+            return None  # C# namespaces do not map to files reliably
         return self._resolve_generic(spec)
 
     # ------------------------------------------------------------------
@@ -289,29 +289,29 @@ class _Resolver:
 
     def _resolve_dart(self, source_dir: str, spec: str) -> str | None:
         if spec.startswith("dart:"):
-            return None  # biblioteca do SDK
+            return None  # SDK library
         if spec.startswith("package:"):
             remainder = spec[len("package:"):]
             package, _, path = remainder.partition("/")
             if not self.dart_package or package != self.dart_package:
-                return None  # dependencia externa (flutter, riverpod, ...)
-            # `package:<proprio>/x.dart` mapeia para `lib/x.dart`
+                return None  # external dependency (flutter, riverpod, ...)
+            # `package:<own>/x.dart` maps to `lib/x.dart`
             return self._try_paths([f"lib/{path}"])
-        # Imports relativos em Dart nao levam `./`: sao relativos ao ficheiro.
+        # Dart relative imports carry no `./`: they are relative to the file.
         return self._try_paths([_normalize(str(Path(source_dir) / spec)), spec])
 
     def _resolve_go(self, spec: str) -> str | None:
         if self.go_module and spec.startswith(self.go_module):
             directory = spec[len(self.go_module):].strip("/")
         elif "/" in spec and not spec.split("/")[0].count("."):
-            directory = spec  # import interno sem prefixo de modulo
+            directory = spec  # internal import without a module prefix
         else:
             return None
         matches = sorted(
             p for p in self.paths
             if p.endswith(".go") and str(Path(p).parent) == (directory or ".")
         )
-        # Um pacote Go sao varios ficheiros: liga ao mais representativo.
+        # A Go package is several files: link to the most representative one.
         return matches[0] if matches else None
 
     def _resolve_java(self, spec: str) -> str | None:
@@ -350,13 +350,13 @@ class _Resolver:
 
 
 def _external_name(spec: str) -> str:
-    """Nome do pacote externo a partir do especificador de import."""
+    """External package name derived from the import specifier."""
     for prefix in ("package:", "dart:", "node:", "npm:", "jsr:"):
         if spec.startswith(prefix):
             spec = spec[len(prefix):]
             break
     root = spec.split("/")[0].split("::")[0].lstrip("@")
-    # `os.path` -> `os`, mas mantem nomes com ponto que sao o pacote (ex: `github.com`)
+    # `os.path` -> `os`, but keep dotted names that are the package (e.g. `github.com`)
     if "." in root and not root.startswith("."):
         head = root.split(".")[0]
         root = root if head in {"github", "gitlab", "gopkg", "golang"} else head
@@ -443,10 +443,10 @@ def render_mermaid(
     page_of_path: dict[str, str] | None = None,
     t: Translator | None = None,
 ) -> str:
-    """Emite um bloco mermaid `flowchart` para o subconjunto de nos indicado.
+    """Emit a mermaid `flowchart` block for the given subset of nodes.
 
-    `focus_module` destaca o modulo da pagina atual; `page_of_path` torna os nos de
-    outros modulos clicaveis, ligando-os a pagina de cartografia desse modulo.
+    `focus_module` highlights the current page's module; `page_of_path` makes nodes
+    from other modules clickable, linking to that module's cartography page.
     """
     t = t or translator("en")
     selected = set(nodes if nodes is not None else graph.nodes)
@@ -497,7 +497,7 @@ def render_module_mermaid(
     graph: CodeGraph, page_of_module: dict[str, str] | None = None,
     t: Translator | None = None,
 ) -> str:
-    """Grafo agregado ao nivel de modulo — legivel mesmo em repositorios grandes."""
+    """Module-level aggregated graph — readable even in large repositories."""
     weights: dict[tuple[str, str], int] = defaultdict(int)
     for src, dst in graph.edges:
         a, b = graph.nodes[src].module, graph.nodes[dst].module
@@ -590,8 +590,8 @@ def _write_module_page(
         neighbours.update(imported_by.get(path, ()))
     neighbours -= own
 
-    # Um modulo muito acoplado pode arrastar milhares de vizinhos: mantem os mais
-    # ligados a este modulo e diz quantos ficaram de fora, em vez de mentir por omissao.
+    # A heavily coupled module can drag in thousands of neighbours: keep the ones
+    # most connected to it and say how many were left out, instead of lying by omission.
     dropped = 0
     if len(neighbours) > NEIGHBOUR_CAP:
         relevance: dict[str, int] = defaultdict(int)
@@ -648,7 +648,7 @@ def _write_module_page(
         "",
     ]
 
-    # -- navegacao entre modulos -----------------------------------------
+    # -- navigation between modules --------------------------------------
     page += [f"## {t('carto.module.neighbours')}", ""]
     if module_out or module_in:
         page += [
@@ -657,8 +657,8 @@ def _write_module_page(
             "|---|---|---|",
         ]
         for other in sorted(set(module_out) | set(module_in)):
-            # page_of_module e relativo a 07-cartography/; esta pagina vive em
-            # 07-cartography/modules/, por isso basta o nome do ficheiro.
+            # page_of_module is relative to 07-cartography/; this page lives in
+            # 07-cartography/modules/, so the file name alone is enough.
             href = page_of_module.get(other, "")
             label = (
                 wikilink(f"07-cartography/{href}", other, in_table=True)
@@ -687,7 +687,7 @@ def write_cartography(
     graph: CodeGraph, config: WikiConfig, max_nodes_single_diagram: int = 140
 ) -> list[Path]:
     t = translator(config.language)
-    """Escreve as paginas deterministicas de cartografia e os artefactos do grafo."""
+    """Write the deterministic cartography pages and the graph artifacts."""
     out = config.output_path / "07-cartography"
     out.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -695,15 +695,15 @@ def write_cartography(
     incoming, outgoing = graph.in_degree, graph.out_degree
     node_count = len(graph.nodes)
 
-    # Adjacencia pre-calculada: sem isto, o calculo de vizinhos por modulo seria
-    # O(ficheiros x arestas) e demoraria minutos em repositorios grandes.
+    # Precomputed adjacency: without it, the per-module neighbour computation would
+    # be O(files x edges) and take minutes on large repositories.
     imports_map: dict[str, list[str]] = defaultdict(list)
     imported_by: dict[str, list[str]] = defaultdict(list)
     for src, dst in sorted(graph.edges):
         imports_map[src].append(dst)
         imported_by[dst].append(src)
 
-    # -- grafo completo, sempre exportado sem truncagem -----------------
+    # -- full graph, always exported untruncated -------------------------
     full_mermaid = render_mermaid(graph, full_labels=True)
     (out / "file-graph.mmd").write_text(
         full_mermaid.removeprefix("```mermaid\n").removesuffix("```") + "\n",
@@ -736,7 +736,7 @@ def write_cartography(
     )
     written.append(out / "graph.json")
 
-    # -- pagina principal: grafo de ficheiros ---------------------------
+    # -- main page: file graph -------------------------------------------
     lines = [
         f"# {t('carto.file.title')}",
         "",
@@ -768,16 +768,16 @@ def write_cartography(
             )
         return rows
 
-    # Preenchido apenas quando existem paginas por modulo (repositorios grandes).
+    # Only populated when per-module pages exist (large repositories).
     page_of_module: dict[str, str] = {}
 
     if node_count <= max_nodes_single_diagram:
         lines += [f"## {t('carto.full_graph')}", "", render_mermaid(graph, t=t), ""]
         lines += [f"## {t('carto.links_table')}", ""] + link_table(sorted(graph.nodes)) + [""]
     else:
-        # Repositorio grande: uma pagina por modulo (dividida em partes quando o
-        # modulo e enorme) mantem a cobertura total sem produzir um ficheiro que
-        # nenhum renderizador consegue abrir.
+        # Large repository: one page per module (split into parts when the module
+        # is huge) keeps coverage complete without producing a file no renderer
+        # can open.
         grouped: dict[str, list[str]] = defaultdict(list)
         for path, node in graph.nodes.items():
             grouped[node.module].append(path)
@@ -787,8 +787,8 @@ def write_cartography(
         modules_dir = out / "modules"
         modules_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1ª passagem: decidir a paginacao e onde vive cada ficheiro, para que os
-        # links cruzados apontem sempre para a pagina certa.
+        # 1st pass: decide the pagination and where each file lives, so that cross
+        # links always point at the right page.
         pagination: dict[str, list[tuple[str, list[str]]]] = {}  # modulo -> [(slug, paths)]
         page_of_path: dict[str, str] = {}
         for module, paths in sorted(grouped.items()):
@@ -824,7 +824,7 @@ def write_cartography(
             "|---|---|---|---|---|",
         ]
 
-        # Acoplamento por modulo, para as tabelas de vizinhanca.
+        # Per-module coupling, for the neighbour tables.
         module_out: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         module_in: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         for src, dst in graph.edges:
@@ -871,7 +871,7 @@ def write_cartography(
 
         lines.append("")
 
-    # -- diagnosticos ----------------------------------------------------
+    # -- diagnostics ------------------------------------------------------
     hubs = sorted(graph.nodes, key=lambda p: -(incoming.get(p, 0) + outgoing.get(p, 0)))[:15]
     lines += [
         f"## {t('carto.hubs')}",
@@ -950,7 +950,7 @@ def write_cartography(
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     written.append(target)
 
-    # -- pagina de modulos ------------------------------------------------
+    # -- module page ------------------------------------------------------
     module_pages = page_of_module
     module_lines = [
         f"# {t('carto.mod.title')}",

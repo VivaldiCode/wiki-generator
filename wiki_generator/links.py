@@ -1,9 +1,8 @@
-"""Validacao dos wikilinks depois de a wiki estar escrita.
+"""Wikilink validation, run once the wiki is written.
 
-Um link partido e pior do que nenhum link: no Obsidian fica a apontar para uma
-nota que nunca vai existir. Como a resolucao depende de todas as paginas ja
-escritas (incluindo a cartografia), a verificacao corre no fim e nao durante a
-geracao.
+A broken link is worse than no link: in Obsidian it points at a note that will
+never exist. Because resolution depends on every page already being written
+(cartography included), the check runs at the end rather than during generation.
 """
 
 from __future__ import annotations
@@ -17,18 +16,18 @@ INLINE_CODE = re.compile(r"`[^`\n]*`")
 
 
 def _mask_code(text: str) -> str:
-    """Substitui codigo por espacos, preservando os offsets.
+    """Replace code with spaces, preserving offsets.
 
-    O Obsidian nao interpreta wikilinks dentro de codigo, e o bash usa `[[ ]]`
-    como sintaxe de teste — sem isto, um `[[ -f x ]]` num exemplo seria tratado
-    como link partido.
+    Obsidian does not interpret wikilinks inside code, and bash uses `[[ ]]` as
+    test syntax — without this, a `[[ -f x ]]` in an example would be treated as
+    a broken link.
     """
     masked = FENCED_BLOCK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
     return INLINE_CODE.sub(lambda m: " " * len(m.group(0)), masked)
 
 
 def collect_notes(wiki_root: Path) -> tuple[set[str], dict[str, list[str]]]:
-    """Notas existentes: por caminho a partir da raiz, e por nome de ficheiro."""
+    """Existing notes: by path from the root, and by file name."""
     paths = {
         str(p.relative_to(wiki_root).as_posix())[:-3] for p in wiki_root.rglob("*.md")
     }
@@ -41,15 +40,15 @@ def collect_notes(wiki_root: Path) -> tuple[set[str], dict[str, list[str]]]:
 def _resolves(target: str, paths: set[str], by_name: dict[str, list[str]]) -> bool:
     if target in paths:
         return True
-    # O Obsidian tambem resolve por nome de nota quando este e unico no vault.
+    # Obsidian also resolves by note name when that name is unique in the vault.
     candidates = by_name.get(target.split("/")[-1], [])
     return target not in paths and len(candidates) == 1 and "/" not in target
 
 
 def validate_and_fix(wiki_root: Path, *, fix: bool = True) -> dict:
-    """Verifica todos os wikilinks; opcionalmente degrada os partidos para texto.
+    """Check every wikilink; optionally degrade broken ones to plain text.
 
-    Devolve um relatorio com os totais e a lista de links nao resolvidos.
+    Returns a report with the totals and the list of unresolved links.
     """
     paths, by_name = collect_notes(wiki_root)
     checked = 0
