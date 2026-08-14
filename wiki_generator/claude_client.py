@@ -16,7 +16,7 @@ from .config import WikiConfig
 
 
 class ClaudeError(RuntimeError):
-    """Falha ao invocar o CLI ou resposta invalida."""
+    """Failed to invoke the CLI, or the response was invalid."""
 
 
 @dataclass
@@ -32,8 +32,8 @@ def ensure_cli_available(config: WikiConfig) -> str:
     path = shutil.which(config.claude_bin)
     if not path:
         raise ClaudeError(
-            f"CLI '{config.claude_bin}' nao encontrado no PATH. "
-            "Instala o Claude Code e autentica com a tua subscricao (`claude auth`)."
+            f"CLI '{config.claude_bin}' not found on PATH. "
+            "Install Claude Code and authenticate with your subscription (`claude auth`)."
         )
     return path
 
@@ -82,7 +82,7 @@ class ClaudeRunner:
     async def run(
         self, prompt: str, system_prompt: str = "", log_name: str | None = None
     ) -> ClaudeResponse:
-        """Corre um prompt e devolve o texto final. Faz retry em falhas transitorias."""
+        """Run a prompt and return the final text. Retries on transient failures."""
         last_error: Exception | None = None
         for attempt in range(self.config.max_retries + 1):
             if attempt:
@@ -97,7 +97,7 @@ class ClaudeRunner:
                 if not _is_retryable(str(exc)):
                     raise
         raise ClaudeError(
-            f"Falhou apos {self.config.max_retries + 1} tentativas: {last_error}"
+            f"Failed after {self.config.max_retries + 1} attempts: {last_error}"
         )
 
     async def _run_once(
@@ -124,7 +124,7 @@ class ClaudeRunner:
         except asyncio.TimeoutError:
             process.kill()
             await process.wait()
-            raise ClaudeError(f"Timeout apos {self.config.timeout}s") from None
+            raise ClaudeError(f"Timed out after {self.config.timeout}s") from None
 
         stdout_text = stdout.decode("utf-8", "replace")
         stderr_text = stderr.decode("utf-8", "replace").strip()
@@ -132,7 +132,7 @@ class ClaudeRunner:
                         stdout_text, stderr_text, process.returncode)
         if process.returncode != 0:
             raise ClaudeError(
-                f"claude saiu com codigo {process.returncode}: {stderr_text[:800] or '(sem stderr)'}"
+                f"claude exited with code {process.returncode}: {stderr_text[:800] or '(no stderr)'}"
             )
 
         response = _parse_json_output(stdout_text)
@@ -184,7 +184,7 @@ class ClaudeRunner:
 def _parse_json_output(raw: str) -> ClaudeResponse:
     raw = raw.strip()
     if not raw:
-        raise ClaudeError("O CLI devolveu stdout vazio.")
+        raise ClaudeError("The CLI returned empty stdout.")
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -198,14 +198,14 @@ def _parse_json_output(raw: str) -> ClaudeResponse:
                 except json.JSONDecodeError:
                     continue
         else:
-            raise ClaudeError(f"Saida nao-JSON do CLI: {raw[:500]}") from None
+            raise ClaudeError(f"Non-JSON output from the CLI: {raw[:500]}") from None
 
     if isinstance(payload, dict) and payload.get("is_error"):
-        raise ClaudeError(f"Erro reportado pelo CLI: {payload.get('result', payload)}")
+        raise ClaudeError(f"Error reported by the CLI: {payload.get('result', payload)}")
 
     text = payload.get("result") if isinstance(payload, dict) else None
     if not isinstance(text, str) or not text.strip():
-        raise ClaudeError("Resposta sem campo 'result' utilizavel.")
+        raise ClaudeError("Response has no usable 'result' field.")
 
     return ClaudeResponse(
         text=text,

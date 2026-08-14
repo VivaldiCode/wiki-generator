@@ -287,7 +287,7 @@ def _build_modules(source_files: list[FileInfo], config: WikiConfig) -> list[Mod
 def scan_repo(config: WikiConfig) -> RepoScan:
     repo = config.repo_path
     if not repo.is_dir():
-        raise NotADirectoryError(f"Repositorio nao encontrado: {repo}")
+        raise NotADirectoryError(f"Repository not found: {repo}")
 
     git_listing = _git_files(repo)
     is_git = git_listing is not None
@@ -325,8 +325,8 @@ def scan_repo(config: WikiConfig) -> RepoScan:
 
     if not files:
         raise ValueError(
-            f"Nenhum ficheiro analisavel em {repo}. "
-            "Verifica --include/--exclude ou se o diretorio esta vazio."
+            f"No analysable files in {repo}. "
+            "Check --include/--exclude, or whether the directory is empty."
         )
 
     def is_test(rel: str) -> bool:

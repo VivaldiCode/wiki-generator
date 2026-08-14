@@ -13,6 +13,7 @@ from . import STRUCTURE_VERSION, __version__
 from .claude_client import ClaudeError, ClaudeRunner
 from .config import WikiConfig
 from .models import PageResult, PageSpec, RepoScan
+from .i18n import translator
 from .prompts import system_prompt
 from .utils import (
     dedupe_leading_heading,
@@ -109,6 +110,7 @@ class WikiGenerator:
         self.scan = scan
         self.manifest = Manifest(config.output_path / MANIFEST_NAME)
         self.system_prompt = system_prompt(config)
+        self.t = translator(config.language)
         self._printed = 0
         self._done = 0
         self._in_flight = 0
@@ -151,8 +153,8 @@ class WikiGenerator:
                 rate = self._done / elapsed if elapsed > 0 and self._done else 0
                 eta = f"~{(self._total - self._done) / rate / 60:.0f}m" if rate else "?"
                 print(
-                    f"    ... {self._done}/{self._total} concluidas | "
-                    f"{self._in_flight} em curso | {elapsed / 60:.0f}m decorridos | "
+                    f"    ... {self._done}/{self._total} done | "
+                    f"{self._in_flight} in flight | {elapsed / 60:.0f}m elapsed | "
                     f"ETA {eta}",
                     flush=True,
                 )
@@ -172,7 +174,7 @@ class WikiGenerator:
             return PageResult(spec=spec, status="cached", markdown=target.read_text("utf-8"))
 
         if self.config.verbose:
-            print(f"    -> a gerar {spec.path}", flush=True)
+            print(f"    -> generating {spec.path}", flush=True)
         self._in_flight += 1
         try:
             response = await runner.run(spec.prompt, self.system_prompt, spec.key)
@@ -200,11 +202,10 @@ class WikiGenerator:
                     markdown, response = retried, retry
                     missing = still_missing
                 if missing:
-                    markdown += (
-                        "\n\n> **Aviso de cobertura:** esta pagina nao documenta "
-                        + ", ".join(f"`{m.lstrip('# ')}`" for m in missing)
-                        + ". Consulta o codigo diretamente para esses ficheiros.\n"
-                    )
+                    markdown += "\n\n" + self.t(
+                        "coverage.warning",
+                        missing=", ".join(f"`{m.lstrip('# ')}`" for m in missing),
+                    ) + "\n"
         except ClaudeError as exc:
             self._report(spec, "failed", str(exc))
             return PageResult(spec=spec, status="failed", error=str(exc))
@@ -239,10 +240,15 @@ class WikiGenerator:
         markdown = markdown_links_to_wikilinks(markdown, base_dir)
         footer = (
             "\n\n---\n\n"
-            f"{wikilink('README', '<- Indice da wiki')}  \n"
-            f"<sub>Gerada por wiki-generator ({self.config.model}) a partir de "
-            f"{len(spec.scope_files)} ficheiro(s) de `{self.config.resolved_project_name}`. "
-            "Nao editar a mao: as alteracoes sao perdidas na proxima geracao.</sub>\n"
+            f"{wikilink('README', self.t('footer.index'))}  \n"
+            "<sub>"
+            + self.t(
+                "footer.generated",
+                model=self.config.model,
+                count=len(spec.scope_files),
+                project=self.config.resolved_project_name,
+            )
+            + "</sub>\n"
         )
         return markdown.rstrip() + footer
 

@@ -101,26 +101,27 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
 def format_report(result: dict, limit: int = 10) -> str:
     if not result["invalid"] and not result["unrooted_count"]:
         return (
-            f"Citacoes: {result['checked']} verificadas, todas apontam para "
-            "ficheiros e linhas existentes."
+            f"Citations: {result['checked']} checked, all point at existing "
+            "files and lines."
         )
     lines = [
-        f"Citacoes: {result['checked']} verificadas, "
-        f"{result['invalid']} invalidas, "
-        f"{result['unrooted_count']} com caminho nao enraizado no repositorio",
+        f"Citations: {result['checked']} checked, "
+        f"{result['invalid']} invalid, "
+        f"{result['unrooted_count']} with a path not rooted at the repository",
     ]
     for page, rel, real in result["unrooted"][:limit]:
-        lines.append(f"  ~ {page}: `{rel}` -> deveria ser `{real}`")
+        lines.append(f"  ~ {page}: `{rel}` -> should be `{real}`")
     for page, rel in result["missing_file"][:limit]:
-        lines.append(f"  ! {page}: `{rel}` nao existe no repositorio")
+        lines.append(f"  ! {page}: `{rel}` does not exist in the repository")
     for page, rel, cited, count in result["out_of_range"][:limit]:
-        lines.append(f"  ! {page}: `{rel}:{cited}` mas o ficheiro tem {count} linhas")
+        lines.append(f"  ! {page}: `{rel}:{cited}` but the file has {count} lines")
     remaining = result["invalid"] - min(limit, len(result["missing_file"])) - min(
         limit, len(result["out_of_range"])
     )
     if remaining > 0:
         lines.append(f"  ... (+{remaining})")
     lines.append(
-        "  Nota: citacoes dentro do intervalo mas desalinhadas nao sao detetaveis aqui."
+        "  Note: citations that are in range but point at the wrong line are not "
+        "detectable here."
     )
     return "\n".join(lines)

@@ -1,4 +1,4 @@
-"""Gera os ficheiros de navegacao da wiki. Markdown puro, wikilinks do Obsidian."""
+"""Wiki navigation files. Plain Markdown, Obsidian wikilinks."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 from .config import WikiConfig
 from .models import PageResult, RepoScan
 from .planner import SECTION_ORDER
+from .i18n import translator
 from .utils import human_size, wikilink
 
 
@@ -40,28 +41,29 @@ def write_index(
     ) or "n/d"
     total_bytes = sum(f.size for f in scan.files)
 
+    t = translator(config.language)
     lines = [
-        f"# Wiki — {config.resolved_project_name}",
+        f"# {t('index.title', project=config.resolved_project_name)}",
         "",
-        "Documentacao gerada automaticamente a partir do codigo-fonte.",
+        t("index.subtitle"),
         "",
         "| | |",
         "|---|---|",
-        f"| Repositorio | `{scan.root}` |",
-        f"| Ficheiros analisados | {len(scan.files)} ({human_size(total_bytes)}) |",
-        f"| Linhas de codigo | {scan.total_lines} |",
-        f"| Linguagens | {languages} |",
-        f"| Modulos documentados | {len(scan.modules)} |",
-        f"| Paginas | {len(usable)} |",
-        f"| Modelo | `{config.model}` |",
-        f"| Gerado em | {generated_at} |",
+        f"| {t('index.repository')} | `{scan.root}` |",
+        f"| {t('index.files')} | {len(scan.files)} ({human_size(total_bytes)}) |",
+        f"| {t('index.lines')} | {scan.total_lines} |",
+        f"| {t('index.languages')} | {languages} |",
+        f"| {t('index.modules')} | {len(scan.modules)} |",
+        f"| {t('index.pages')} | {len(usable)} |",
+        f"| {t('index.model')} | `{config.model}` |",
+        f"| {t('index.generated_at')} | {generated_at} |",
         "",
-        "## Indice",
+        f"## {t('index.contents')}",
         "",
     ]
 
     for section in _ordered_sections(grouped):
-        lines.append(f"### {section}")
+        lines.append(f"### {t(section)}")
         lines.append("")
         for result in grouped[section]:
             spec = result.spec
@@ -71,22 +73,20 @@ def write_index(
 
     failed = [r for r in results if r.status == "failed"]
     if failed:
-        lines += ["### Paginas com falha", ""]
+        lines += [f"### {t('index.failed')}", ""]
         lines += [f"- `{r.spec.path}` — {r.error[:200]}" for r in failed]
         lines.append("")
 
     lines += [
-        "## Como regerar",
+        f"## {t('index.regenerate')}",
         "",
         "```bash",
-        f"wiki-generator --repo {scan.root} --out {config.output_path}",
+        f"wiki-generator --source {scan.root} --output {config.output_path.parent}",
         "```",
         "",
-        "Apenas as paginas cujos ficheiros de origem mudaram sao regeradas. "
-        "Usa `--force` para regerar tudo.",
+        t("index.incremental"),
         "",
-        "> Estas paginas sao geradas por um modelo a partir do codigo. "
-        "Trata-as como um mapa util, nao como a fonte de verdade — o codigo e que manda.",
+        t("index.disclaimer"),
     ]
 
     target = config.output_path / "README.md"
@@ -98,10 +98,11 @@ def write_index(
 # ----------------------------------------------------------------------
 def write_summary(config: WikiConfig, results: list[PageResult]) -> Path:
     """SUMMARY.md — indice linear, util como nota de entrada num vault."""
+    t = translator(config.language)
     grouped = _group_by_section([r for r in results if r.ok])
-    lines = ["# Summary", "", f"- {wikilink('README', 'Indice')}", ""]
+    lines = [f"# {t('summary.title')}", "", f"- {wikilink('README', t('summary.index'))}", ""]
     for section in _ordered_sections(grouped):
-        lines.append(f"## {section}")
+        lines.append(f"## {t(section)}")
         lines.append("")
         for result in grouped[section]:
             lines.append(f"- {wikilink(result.spec.path, result.spec.title)}")

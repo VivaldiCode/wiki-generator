@@ -15,14 +15,15 @@ from .prompts import (
 )
 from .utils import chunked
 
+# Canonical section keys, resolved to text by `i18n` at render time.
 SECTION_ORDER = [
-    "1. Visao Geral",
-    "2. Arquitetura",
-    "3. Modulos",
-    "4. Referencia de Codigo",
-    "5. Guias",
-    "6. Operacao",
-    "7. Cartografia do Codigo",
+    "sec.overview",
+    "sec.architecture",
+    "sec.modules",
+    "sec.reference",
+    "sec.guides",
+    "sec.operations",
+    "sec.cartography",
 ]
 
 
@@ -62,7 +63,7 @@ def build_plan(
                 key=f"module.{module.slug}",
                 path=f"03-modules/{module.slug}.md",
                 title=f"Modulo: {module.key}",
-                section="3. Modulos",
+                section="sec.modules",
                 kind="module",
                 order=310 + index,
                 summary=(
@@ -96,7 +97,7 @@ def build_plan(
                         key=f"reference.{module.slug}{suffix}",
                         path=f"04-reference/{module.slug}{suffix}.md",
                         title=f"Referencia: {module.key}{title_suffix}",
-                        section="4. Referencia de Codigo",
+                        section="sec.reference",
                         kind="reference",
                         order=410 + module_index * 10 + part_index,
                         summary=", ".join(f.name for f in group[:5])

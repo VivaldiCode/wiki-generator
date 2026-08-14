@@ -32,7 +32,7 @@ class WikiConfig:
     # --- conteudo ---
     language: str = "en"
     project_name: str | None = None
-    audience: str = "engenheiros que vao trabalhar neste repositorio"
+    audience: str = "engineers who will work on this repository"
 
     # --- estrutura / scan ---
     module_depth: int = 2
@@ -100,7 +100,7 @@ class WikiConfig:
         unknown = set(raw) - known
         if unknown:
             raise ValueError(
-                f"Chaves desconhecidas em {path}: {', '.join(sorted(unknown))}"
+                f"Unknown keys in {path}: {', '.join(sorted(unknown))}"
             )
         raw.update({k: v for k, v in overrides.items() if v is not None})
         return cls(**raw)

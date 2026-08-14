@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .config import WikiConfig
 from .models import FileInfo, RepoScan
+from .i18n import Translator, translator
 from .utils import chunked, read_text, slugify, wikilink
 
 # ----------------------------------------------------------------------
@@ -440,15 +441,17 @@ def render_mermaid(
     direction: str = "LR",
     focus_module: str | None = None,
     page_of_path: dict[str, str] | None = None,
+    t: Translator | None = None,
 ) -> str:
     """Emite um bloco mermaid `flowchart` para o subconjunto de nos indicado.
 
     `focus_module` destaca o modulo da pagina atual; `page_of_path` torna os nos de
     outros modulos clicaveis, ligando-os a pagina de cartografia desse modulo.
     """
+    t = t or translator("en")
     selected = set(nodes if nodes is not None else graph.nodes)
     if not selected:
-        return "```mermaid\nflowchart LR\n  empty[\"Sem ficheiros para representar\"]\n```"
+        return '```mermaid\nflowchart LR\n  empty["' + t("carto.empty") + '"]\n```'
 
     lines = [f"flowchart {direction}"]
     external_nodes: list[tuple[str, str]] = []  # (id, href)
@@ -460,7 +463,8 @@ def render_mermaid(
         for index, (module, paths) in enumerate(sorted(grouped.items())):
             is_focus = focus_module is not None and module == focus_module
             title = module if focus_module is None else (
-                f"{module} (este modulo)" if is_focus else f"{module} (vizinho)"
+                f"{module} ({t('carto.this_module')})" if is_focus
+                else f"{module} ({t('carto.neighbour')})"
             )
             lines.append(f'  subgraph sg{index}["{title}"]')
             lines.append("    direction TB")
@@ -484,13 +488,14 @@ def render_mermaid(
             "  class " + ",".join(node_id for node_id, _ in external_nodes) + " neighbour;"
         )
         for node_id, href in external_nodes:
-            lines.append(f'  click {node_id} "{href}" "Abrir a cartografia deste modulo"')
+            lines.append('  click ' + node_id + ' "' + href + '" "' + t('carto.click_tooltip') + '"')
 
     return "```mermaid\n" + "\n".join(lines) + "\n```"
 
 
 def render_module_mermaid(
-    graph: CodeGraph, page_of_module: dict[str, str] | None = None
+    graph: CodeGraph, page_of_module: dict[str, str] | None = None,
+    t: Translator | None = None,
 ) -> str:
     """Grafo agregado ao nivel de modulo — legivel mesmo em repositorios grandes."""
     weights: dict[tuple[str, str], int] = defaultdict(int)
@@ -499,11 +504,13 @@ def render_module_mermaid(
         if a != b:
             weights[(a, b)] += 1
 
+    t = t or translator("en")
     modules = sorted({node.module for node in graph.nodes.values()})
     lines = ["flowchart LR"]
     for module in modules:
         count = sum(1 for n in graph.nodes.values() if n.module == module)
-        lines.append(f'  {_mermaid_id(module)}["{module}<br/>{count} ficheiros"]')
+        label = f"{module}<br/>{count} " + t("carto.th.files").lower()
+        lines.append(f'  {_mermaid_id(module)}["{label}"]')
     for (a, b), weight in sorted(weights.items(), key=lambda kv: -kv[1]):
         label = f"|{weight}|" if weight > 1 else ""
         lines.append(f"  {_mermaid_id(a)} -->{label} {_mermaid_id(b)}")
@@ -512,14 +519,14 @@ def render_module_mermaid(
             href = page_of_module.get(module)
             if href:
                 lines.append(
-                    f'  click {_mermaid_id(module)} "{href}" "Abrir a cartografia deste modulo"'
+                    '  click ' + _mermaid_id(module) + ' "' + href + '" "' + t('carto.click_tooltip') + '"'
                 )
     return "```mermaid\n" + "\n".join(lines) + "\n```"
 
 
 # ----------------------------------------------------------------------
 def graph_context(graph: CodeGraph, limit: int = 300) -> str:
-    """Resumo textual do grafo para injetar nos prompts do modelo."""
+    """Textual summary of the graph, injected into the model prompts."""
     incoming, outgoing = graph.in_degree, graph.out_degree
     hubs = sorted(
         graph.nodes,
@@ -531,26 +538,26 @@ def graph_context(graph: CodeGraph, limit: int = 300) -> str:
     cycles = graph.cycles(limit=8)
 
     return f"""<code_cartography>
-Grafo de dependencias calculado estaticamente (arestas verificadas, nao inferidas).
-Ficheiros no grafo: {len(graph.nodes)} | Arestas internas: {len(graph.edges)}
+Statically computed dependency graph (edges are verified, not inferred).
+Files in the graph: {len(graph.nodes)} | Internal edges: {len(graph.edges)}
 
-Ficheiros mais conectados (hubs):
-{chr(10).join(f"- {p} (entrada {incoming.get(p, 0)}, saida {outgoing.get(p, 0)})" for p in hubs) or "- (nenhum)"}
+Most connected files (hubs):
+{chr(10).join(f"- {p} (in {incoming.get(p, 0)}, out {outgoing.get(p, 0)})" for p in hubs) or "- (none)"}
 
-Candidatos a entrypoint (importam mas ninguem os importa):
-{chr(10).join(f"- {p}" for p in graph.entry_candidates()[:15]) or "- (nenhum)"}
+Entrypoint candidates (they import, nothing imports them):
+{chr(10).join(f"- {p}" for p in graph.entry_candidates()[:15]) or "- (none)"}
 
-Ficheiros isolados (sem ligacoes):
-{chr(10).join(f"- {p}" for p in graph.orphans()[:15]) or "- (nenhum)"}
+Orphan files (no edges at all):
+{chr(10).join(f"- {p}" for p in graph.orphans()[:15]) or "- (none)"}
 
-Ciclos de dependencia detetados:
-{chr(10).join("- " + " -> ".join(c) for c in cycles) or "- (nenhum)"}
+Dependency cycles detected:
+{chr(10).join("- " + " -> ".join(c) for c in cycles) or "- (none)"}
 
-Dependencias externas mais usadas:
-{chr(10).join(f"- {name} ({count} imports)" for name, count in externals) or "- (nenhuma)"}
+Most used external dependencies:
+{chr(10).join(f"- {name} ({count} imports)" for name, count in externals) or "- (none)"}
 
-Arestas (origem -> destino){f", truncado nas primeiras {limit}" if len(graph.edges) > limit else ""}:
-{chr(10).join(edge_lines) or "(nenhuma)"}
+Edges (source -> target){f", truncated to the first {limit}" if len(graph.edges) > limit else ""}:
+{chr(10).join(edge_lines) or "(none)"}
 </code_cartography>
 """
 
@@ -573,8 +580,9 @@ def _write_module_page(
     module_in: dict[str, int],
     link_table,
     target: Path,
+    t: Translator,
 ) -> None:
-    """Escreve uma pagina de cartografia de um modulo, com navegacao para os vizinhos."""
+    """Write one module's cartography page, with navigation to its neighbours."""
     own = set(chunk)
     neighbours = set()
     for path in chunk:
@@ -598,19 +606,23 @@ def _write_module_page(
         dropped = len(neighbours) - NEIGHBOUR_CAP
         neighbours = set(ranked[:NEIGHBOUR_CAP])
 
-    title_suffix = f" (parte {part} de {total_parts})" if total_parts > 1 else ""
+    title_suffix = (
+        t("carto.module.part", part=part, total=total_parts) if total_parts > 1 else ""
+    )
+    of_total = (
+        t("carto.module.of_total", total=sum(len(c) for _, c in entries))
+        if total_parts > 1 else ""
+    )
     page = [
-        f"# Cartografia — `{module}`{title_suffix}",
+        f"# {t('carto.module.title', module=module)}{title_suffix}",
         "",
-        f"{len(chunk)} ficheiros nesta pagina"
-        + (f", de {sum(len(c) for _, c in entries)} no modulo" if total_parts > 1 else "")
-        + ". Os ficheiros de outros modulos aparecem a tracejado e sao clicaveis.",
+        t("carto.module.intro", count=len(chunk), of_total=of_total),
         "",
     ]
 
     if total_parts > 1:
         page += [
-            "**Partes deste modulo:** "
+            t("carto.module.parts")
             + " · ".join(
                 f"**{i}**" if i == part
                 else wikilink(f"07-cartography/modules/{s}", str(i))
@@ -621,10 +633,7 @@ def _write_module_page(
 
     if dropped:
         page += [
-            f"> {dropped} ficheiros vizinhos foram omitidos do diagrama por legibilidade "
-            "(ficaram os mais ligados a este modulo). A tabela de ligacoes abaixo esta "
-            "completa, e o grafo integral esta em "
-            "`07-cartography/graph.json`.",
+            t("carto.module.dropped", dropped=dropped),
             "",
         ]
 
@@ -634,14 +643,19 @@ def _write_module_page(
             sorted(own | neighbours),
             focus_module=module,
             page_of_path=page_of_path,
+            t=t,
         ),
         "",
     ]
 
     # -- navegacao entre modulos -----------------------------------------
-    page += ["## Modulos vizinhos", ""]
+    page += [f"## {t('carto.module.neighbours')}", ""]
     if module_out or module_in:
-        page += ["| Modulo | Este importa de la | Esse importa daqui |", "|---|---|---|"]
+        page += [
+            f"| {t('carto.th.module')} | {t('carto.module.th.out')} | "
+            f"{t('carto.module.th.in')} |",
+            "|---|---|---|",
+        ]
         for other in sorted(set(module_out) | set(module_in)):
             # page_of_module e relativo a 07-cartography/; esta pagina vive em
             # 07-cartography/modules/, por isso basta o nome do ficheiro.
@@ -652,18 +666,18 @@ def _write_module_page(
             )
             page.append(f"| {label} | {module_out.get(other, 0)} | {module_in.get(other, 0)} |")
     else:
-        page.append("Este modulo nao tem ligacoes a outros modulos.")
+        page.append(t("carto.module.no_neighbours"))
     page += [""]
 
-    page += ["## Ligacoes por ficheiro", ""] + link_table(sorted(chunk))
+    page += [f"## {t('carto.links_table')}", ""] + link_table(sorted(chunk))
     page += [
         "",
         "---",
         "",
-        f"{wikilink('07-cartography/file-graph', '<- Grafo de ficheiros')} | "
-        f"{wikilink('07-cartography/module-graph', 'Grafo de modulos')} | "
-        f"{wikilink('README', '<- Indice da wiki')}  ",
-        "<sub>Pagina calculada deterministicamente por wiki-generator.</sub>",
+        f"{wikilink('07-cartography/file-graph', t('carto.footer.file_graph'))} | "
+        f"{wikilink('07-cartography/module-graph', t('carto.footer.module_graph'))} | "
+        f"{wikilink('README', t('footer.index'))}  ",
+        t("carto.footer.deterministic"),
     ]
     target.write_text("\n".join(page) + "\n", encoding="utf-8")
 
@@ -672,6 +686,7 @@ def _write_module_page(
 def write_cartography(
     graph: CodeGraph, config: WikiConfig, max_nodes_single_diagram: int = 140
 ) -> list[Path]:
+    t = translator(config.language)
     """Escreve as paginas deterministicas de cartografia e os artefactos do grafo."""
     out = config.output_path / "07-cartography"
     out.mkdir(parents=True, exist_ok=True)
@@ -723,24 +738,26 @@ def write_cartography(
 
     # -- pagina principal: grafo de ficheiros ---------------------------
     lines = [
-        "# Cartografia — Grafo de Ficheiros",
+        f"# {t('carto.file.title')}",
         "",
-        "Grafo de dependencias entre ficheiros, extraido estaticamente dos "
-        "`import`/`require`/`include` do codigo. Cada aresta `A --> B` significa "
-        "**A importa B**.",
+        t("carto.file.intro"),
         "",
-        "| Metrica | Valor |",
+        f"| {t('carto.metric')} | {t('carto.value')} |",
         "|---|---|",
-        f"| Ficheiros no grafo | {node_count} |",
-        f"| Ligacoes internas | {len(graph.edges)} |",
-        f"| Ficheiros isolados | {len(graph.orphans())} |",
-        f"| Ciclos de dependencia | {len(graph.cycles(limit=100))} |",
-        f"| Pacotes externos distintos | {len(graph.external)} |",
+        f"| {t('carto.m.nodes')} | {node_count} |",
+        f"| {t('carto.m.edges')} | {len(graph.edges)} |",
+        f"| {t('carto.m.orphans')} | {len(graph.orphans())} |",
+        f"| {t('carto.m.cycles')} | {len(graph.cycles(limit=100))} |",
+        f"| {t('carto.m.external')} | {len(graph.external)} |",
         "",
     ]
 
     def link_table(paths: list[str]) -> list[str]:
-        rows = ["| Ficheiro | Importa | Importado por |", "|---|---|---|"]
+        rows = [
+            f"| {t('carto.th.file')} | {t('carto.th.imports')} | "
+            f"{t('carto.th.imported_by')} |",
+            "|---|---|---|",
+        ]
         for path in paths:
             outs = imports_map.get(path, [])
             ins = imported_by.get(path, [])
@@ -755,8 +772,8 @@ def write_cartography(
     page_of_module: dict[str, str] = {}
 
     if node_count <= max_nodes_single_diagram:
-        lines += ["## Grafo completo", "", render_mermaid(graph), ""]
-        lines += ["## Ligacoes por ficheiro", ""] + link_table(sorted(graph.nodes)) + [""]
+        lines += [f"## {t('carto.full_graph')}", "", render_mermaid(graph, t=t), ""]
+        lines += [f"## {t('carto.links_table')}", ""] + link_table(sorted(graph.nodes)) + [""]
     else:
         # Repositorio grande: uma pagina por modulo (dividida em partes quando o
         # modulo e enorme) mantem a cobertura total sem produzir um ficheiro que
@@ -787,27 +804,23 @@ def write_cartography(
             page_of_module[module] = f"modules/{entries[0][0]}.md"
 
         lines += [
-            "## Grafo completo",
+            f"## {t('carto.full_graph')}",
             "",
-            f"O repositorio tem {node_count} ficheiros no grafo — acima do limite de "
-            f"{max_nodes_single_diagram} para um unico diagrama legivel numa pagina. "
-            "A cobertura continua a ser total, repartida assim:",
+            t("carto.split.intro", nodes=node_count, limit=max_nodes_single_diagram),
             "",
-            "- **Grafo integral, sem truncagem:** `07-cartography/file-graph.mmd` "
-            "(qualquer visualizador Mermaid) e `07-cartography/graph.json` (ferramentas).",
-            "- **Vista agregada:** o diagrama por modulo aqui abaixo — os nos sao "
-            "clicaveis e levam a pagina de cada modulo.",
-            "- **Detalhe ficheiro-a-ficheiro:** uma pagina por modulo, indexada a seguir. "
-            "Nessas paginas, os ficheiros de outros modulos aparecem a tracejado e "
-            "sao clicaveis, para se poder navegar o grafo de modulo em modulo.",
+            t("carto.split.b1"),
+            t("carto.split.b2"),
+            t("carto.split.b3"),
             "",
-            "### Vista agregada por modulo",
+            f"### {t('carto.aggregated')}",
             "",
-            render_module_mermaid(graph, page_of_module),
+            render_module_mermaid(graph, page_of_module, t=t),
             "",
-            "### Diagramas por modulo",
+            f"### {t('carto.per_module')}",
             "",
-            "| Modulo | Ficheiros | Importa de | E importado por | Paginas |",
+            f"| {t('carto.th.module')} | {t('carto.th.files')} | "
+            f"{t('carto.th.imports_from')} | {t('carto.th.imported_by_n')} | "
+            f"{t('carto.th.pages')} |",
             "|---|---|---|---|---|",
         ]
 
@@ -824,7 +837,8 @@ def write_cartography(
             paths = grouped[module]
             page_links = " ".join(
                 wikilink(f"07-cartography/modules/{slug}",
-                         str(index) if len(entries) > 1 else "ver", in_table=True)
+                         str(index) if len(entries) > 1 else t("carto.view"),
+                         in_table=True)
                 for index, (slug, _) in enumerate(entries, start=1)
             )
             lines.append(
@@ -851,6 +865,7 @@ def write_cartography(
                     module_in=module_in.get(module, {}),
                     link_table=link_table,
                     target=modules_dir / f"{slug}.md",
+                    t=t,
                 )
                 written.append(modules_dir / f"{slug}.md")
 
@@ -859,11 +874,12 @@ def write_cartography(
     # -- diagnosticos ----------------------------------------------------
     hubs = sorted(graph.nodes, key=lambda p: -(incoming.get(p, 0) + outgoing.get(p, 0)))[:15]
     lines += [
-        "## Hubs",
+        f"## {t('carto.hubs')}",
         "",
-        "Ficheiros com mais ligacoes — mudanças aqui propagam-se mais longe.",
+        t("carto.hubs.intro"),
         "",
-        "| Ficheiro | Importado por | Importa | Total |",
+        f"| {t('carto.th.file')} | {t('carto.th.imported_by')} | "
+        f"{t('carto.th.imports')} | {t('carto.th.total')} |",
         "|---|---|---|---|",
     ]
     for path in hubs:
@@ -872,33 +888,30 @@ def write_cartography(
     lines.append("")
 
     cycles = graph.cycles(limit=25)
-    lines += ["## Ciclos de dependencia", ""]
+    lines += [f"## {t('carto.cycles')}", ""]
     if cycles:
-        lines.append("Ciclos tornam o codigo dificil de testar e de extrair. Detetados:")
+        lines.append(t("carto.cycles.found"))
         lines.append("")
         lines += [f"- `{' -> '.join(cycle)}`" for cycle in cycles]
     else:
-        lines.append("Nenhum ciclo de dependencia detetado.")
+        lines.append(t("carto.cycles.none"))
     lines.append("")
 
     orphans = graph.orphans()
-    lines += ["## Ficheiros isolados", ""]
+    lines += [f"## {t('carto.orphans')}", ""]
     if orphans:
-        lines.append(
-            "Sem ligacoes de entrada nem de saida. Podem ser entrypoints carregados "
-            "dinamicamente, scripts avulsos, ou codigo morto — vale a pena confirmar."
-        )
+        lines.append(t("carto.orphans.intro"))
         lines.append("")
         lines += [f"- `{path}`" for path in orphans]
     else:
-        lines.append("Nenhum ficheiro isolado.")
+        lines.append(t("carto.orphans.none"))
     lines.append("")
 
     externals = sorted(graph.external.items(), key=lambda kv: -kv[1])[:40]
     lines += [
-        "## Dependencias externas mais usadas",
+        f"## {t('carto.external')}",
         "",
-        "| Pacote | Imports |",
+        f"| {t('carto.th.package')} | {t('carto.th.imports_count')} |",
         "|---|---|",
     ]
     lines += [f"| `{name}` | {count} |" for name, count in externals] or ["| — | — |"]
@@ -906,11 +919,9 @@ def write_cartography(
 
     if graph.languages_without_extractor:
         lines += [
-            "## Linguagens sem analise de imports",
+            f"## {t('carto.no_extractor')}",
             "",
-            "Estas linguagens estao presentes no repositorio mas nao tem extrator de "
-            "imports nesta ferramenta. Os seus ficheiros aparecem no grafo **sem "
-            "arestas** — a ausencia de ligacoes nao significa que estejam isolados:",
+            t("carto.no_extractor.intro"),
             "",
         ]
         lines += [f"- {lang}" for lang in graph.languages_without_extractor]
@@ -918,10 +929,9 @@ def write_cartography(
 
     if graph.unresolved:
         lines += [
-            "## Imports relativos nao resolvidos",
+            f"## {t('carto.unresolved')}",
             "",
-            "Especificadores relativos que nao apontam para um ficheiro analisado "
-            "(aliases de build, ficheiros gerados, ou ficheiros excluidos do scan).",
+            t("carto.unresolved.intro"),
             "",
         ]
         for path, specs in sorted(graph.unresolved.items())[:40]:
@@ -931,10 +941,9 @@ def write_cartography(
     lines += [
         "---",
         "",
-        f"{wikilink('07-cartography/module-graph', 'Grafo de modulos')} | "
-        f"{wikilink('README', '<- Indice da wiki')}  ",
-        "<sub>Pagina calculada deterministicamente por wiki-generator (analise "
-        "estatica de imports). Nao gerada por modelo.</sub>",
+        f"{wikilink('07-cartography/module-graph', t('carto.footer.module_graph'))} | "
+        f"{wikilink('README', t('footer.index'))}  ",
+        t("carto.footer.deterministic"),
     ]
 
     target = out / "file-graph.md"
@@ -944,21 +953,16 @@ def write_cartography(
     # -- pagina de modulos ------------------------------------------------
     module_pages = page_of_module
     module_lines = [
-        "# Cartografia — Grafo de Modulos",
+        f"# {t('carto.mod.title')}",
         "",
-        "Mesmo grafo agregado ao nivel de modulo. O numero na aresta e a "
-        "quantidade de imports de ficheiro que a sustentam."
-        + (
-            " Os nos sao clicaveis e abrem a cartografia detalhada de cada modulo."
-            if module_pages
-            else ""
-        ),
+        t("carto.mod.intro") + (t("carto.mod.clickable") if module_pages else ""),
         "",
-        render_module_mermaid(graph, module_pages),
+        render_module_mermaid(graph, module_pages, t=t),
         "",
-        "## Acoplamento entre modulos",
+        f"## {t('carto.mod.coupling')}",
         "",
-        "| Origem | Destino | Imports |",
+        f"| {t('carto.th.source')} | {t('carto.th.target')} | "
+        f"{t('carto.th.imports_count')} |",
         "|---|---|---|",
     ]
 
@@ -982,9 +986,9 @@ def write_cartography(
         "",
         "---",
         "",
-        f"{wikilink('07-cartography/file-graph', 'Grafo de ficheiros')} | "
-        f"{wikilink('README', '<- Indice da wiki')}  ",
-        "<sub>Pagina calculada deterministicamente por wiki-generator.</sub>",
+        f"{wikilink('07-cartography/file-graph', t('carto.footer.file_graph'))} | "
+        f"{wikilink('README', t('footer.index'))}  ",
+        t("carto.footer.deterministic"),
     ]
     module_target = out / "module-graph.md"
     module_target.write_text("\n".join(module_lines) + "\n", encoding="utf-8")

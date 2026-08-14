@@ -1,4 +1,4 @@
-"""Interface de linha de comandos."""
+"""Command-line interface."""
 
 from __future__ import annotations
 
@@ -25,93 +25,93 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wiki-generator",
         description=(
-            "Gera uma wiki completa e padronizada de um repositorio usando o "
-            "Claude Code em modo headless (subscricao, sem API key)."
+            "Generate a complete, standardized engineering wiki from a repository "
+            "using Claude Code in headless mode (subscription, no API key)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Exemplos:\n"
+            "Examples:\n"
             "  wiki-generator --source ~/code/meu-projeto\n"
             "  wiki-generator --source ~/code/meu-projeto --output ~/wikis\n"
             "      -> ~/wikis/meu-projeto/\n"
             "  wiki-generator --source ~/code --output ~/wikis\n"
-            "      -> uma wiki por repositorio git encontrado em ~/code\n"
+            "      -> one wiki per git repository found in ~/code\n"
             "  wiki-generator --source . --only architecture --force\n"
             "  wiki-generator --source . --log-dir /tmp/wg-logs --verbose\n"
         ),
     )
 
-    target = parser.add_argument_group("alvo")
+    target = parser.add_argument_group("target")
     target.add_argument("--source", "-s", "--repo", "-r", dest="source", default=".",
-                        help="Repositorio a documentar, ou uma pasta que contenha varios "
-                             "repositorios git (nesse caso sao todos processados).")
+                        help="Repository to document, or a folder containing several git "
+                             "repositories (all of them are then processed).")
     target.add_argument("--output", "-o", "--out", dest="output", default=None,
-                        help="Pasta de saida. Cada repositorio recebe a sua wiki em "
-                             "<output>/<nome-do-repo>/. Sem esta opcao, a wiki vai "
-                             "para <repo>/wiki.")
+                        help="Output folder. Each repository gets its wiki in "
+                             "<output>/<repo-name>/. Without this option the wiki "
+                             "goes to <repo>/wiki.")
     target.add_argument("--config", "-c", default=None,
-                        help="Ficheiro JSON de configuracao.")
+                        help="JSON configuration file.")
 
-    model = parser.add_argument_group("modelo")
+    model = parser.add_argument_group("model")
     model.add_argument("--model", "-m", default=None,
-                       help=f"Modelo a usar (default: {DEFAULT_MODEL}).")
+                       help=f"Model to use (default: {DEFAULT_MODEL}).")
     model.add_argument("--fallback-model", default=None,
-                       help="Modelo de recurso se o principal estiver indisponivel.")
+                       help="Fallback model if the primary one is unavailable.")
     model.add_argument("--concurrency", "-j", type=int, default=None,
-                       help="Paginas geradas em paralelo (default: 4).")
+                       help="Pages generated in parallel (default: 4).")
     model.add_argument("--timeout", type=int, default=None,
-                       help="Timeout por pagina, em segundos (default: 600).")
+                       help="Per-page timeout, in seconds (default: 600).")
     model.add_argument("--max-retries", type=int, default=None,
-                       help="Tentativas extra em falhas transitorias (default: 2).")
+                       help="Extra attempts on transient failures (default: 2).")
     model.add_argument("--max-budget-usd", type=float, default=None,
-                       help="Tecto de custo por chamada (so relevante com API key).")
+                       help="Cost ceiling per call (only relevant with an API key).")
     model.add_argument("--permission-mode", default=None,
                        choices=["acceptEdits", "auto", "bypassPermissions", "manual",
                                 "dontAsk", "plan"],
-                       help="Modo de permissoes do CLI (default: bypassPermissions).")
+                       help="Claude Code permission mode (default: bypassPermissions).")
     model.add_argument("--claude-bin", default=None,
-                       help="Binario do Claude Code (default: claude).")
+                       help="Claude Code binary (default: claude).")
     model.add_argument("--log-dir", default=None, metavar="DIR",
-                       help="Guardar as chamadas ao Claude Code (prompt, stdout, stderr) "
-                            "em DIR/<repo>/<pagina>.json, para debug.")
+                       help="Save every Claude Code call (prompt, stdout, stderr) to "
+                            "DIR/<repo>/<page>.json, for debugging.")
 
-    content = parser.add_argument_group("conteudo")
+    content = parser.add_argument_group("content")
     content.add_argument("--language", "-l", default=None,
-                         help="Idioma da wiki: en, pt, pt-br, es, ... (default: en).")
+                         help="Wiki language: en, pt, pt-br, es, ... (default: en).")
     content.add_argument("--project-name", default=None,
-                         help="Nome do projeto (default: nome do diretorio).")
-    content.add_argument("--audience", default=None, help="Publico-alvo da documentacao.")
+                         help="Project name (default: the directory name).")
+    content.add_argument("--audience", default=None, help="Target audience for the documentation.")
 
-    structure = parser.add_argument_group("estrutura")
+    structure = parser.add_argument_group("structure")
     structure.add_argument("--module-depth", type=int, default=None,
-                           help="Profundidade de diretorios usada para agrupar modulos (default: 2).")
+                           help="Directory depth used to group modules (default: 2).")
     structure.add_argument("--max-modules", type=int, default=None,
-                           help="Numero maximo de modulos documentados (default: 25).")
+                           help="Maximum number of documented modules (default: 25).")
     structure.add_argument("--files-per-reference-page", type=int, default=None,
-                           help="Ficheiros por pagina de referencia (default: 6).")
+                           help="Files per reference page (default: 6).")
     structure.add_argument("--max-reference-pages", type=int, default=None,
-                           help="Tecto de paginas de referencia (default: 60).")
+                           help="Cap on reference pages (default: 60).")
     structure.add_argument("--no-reference", action="store_true",
-                           help="Nao gerar as paginas de referencia de baixo nivel.")
+                           help="Skip the low-level reference pages.")
     structure.add_argument("--single", action="store_true",
-                           help="Tratar a arvore toda como um so repositorio, mesmo que "
-                                "contenha varios repos git (por omissao gera uma wiki por repo).")
+                           help="Treat the whole tree as a single repository, even if it "
+                                "contains several git repos (default: one wiki per repo).")
     structure.add_argument("--no-cartography", action="store_true",
-                           help="Nao gerar o grafo de dependencias entre ficheiros.")
+                           help="Skip the file dependency graph.")
     structure.add_argument("--include", action="append", default=None, metavar="GLOB",
-                           help="So analisar ficheiros que correspondam (repetivel).")
+                           help="Only analyse files matching this glob (repeatable).")
     structure.add_argument("--exclude", action="append", default=None, metavar="GLOB",
-                           help="Excluir ficheiros que correspondam (repetivel).")
+                           help="Exclude files matching this glob (repeatable).")
 
-    behaviour = parser.add_argument_group("comportamento")
+    behaviour = parser.add_argument_group("behaviour")
     behaviour.add_argument("--force", "-f", action="store_true",
-                           help="Regerar todas as paginas, ignorando a cache.")
+                           help="Regenerate every page, ignoring the cache.")
     behaviour.add_argument("--dry-run", action="store_true",
-                           help="Mostrar o plano de paginas e sair, sem chamar o modelo.")
-    behaviour.add_argument("--only", action="append", default=None, metavar="ALVO",
-                           help="Gerar so estas paginas: chave (`architecture.overview`), "
-                                "prefixo (`architecture`) ou tipo (`module`). Repetivel.")
-    behaviour.add_argument("--verbose", "-v", action="store_true", help="Saida detalhada.")
+                           help="Print the page plan and exit, without calling the model.")
+    behaviour.add_argument("--only", action="append", default=None, metavar="TARGET",
+                           help="Generate only these pages: key (`architecture.overview`), "
+                                "prefix (`architecture`) or type (`module`). Repeatable.")
+    behaviour.add_argument("--verbose", "-v", action="store_true", help="Verbose output.")
     behaviour.add_argument("--version", action="version", version=f"wiki-generator {__version__}")
 
     return parser
@@ -120,8 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
 # ----------------------------------------------------------------------
 def _config_from_args(args: argparse.Namespace) -> WikiConfig:
     source = Path(args.source).expanduser().resolve()
-    # `--output` e a pasta que aloja as wikis; cada repositorio recebe uma
-    # subpasta com o seu nome. Sem `--output`, mantem-se a wiki dentro do repo.
+    # `--output` is the folder hosting the wikis; each repository gets a
+    # subfolder named after it. Without `--output`, the wiki stays in the repo.
     explicit_output = Path(args.output).expanduser().resolve() if args.output else None
     out = explicit_output / source.name if explicit_output else source / "wiki"
 
@@ -167,17 +167,17 @@ def _config_from_args(args: argparse.Namespace) -> WikiConfig:
 
 
 def _synthetic_results(paths: list[Path], config: WikiConfig) -> list[PageResult]:
-    """Regista as paginas deterministicas de cartografia no indice da wiki."""
+    """Register the deterministic cartography pages in the wiki index."""
     meta = {
         "file-graph.md": (
-            "Cartografia — Grafo de Ficheiros",
+            "Cartography — File Graph",
             705,
-            "Grafo mermaid completo: que ficheiro importa qual, hubs, ciclos e orfaos.",
+            "Full mermaid graph: which file imports which, hubs, cycles and orphans.",
         ),
         "module-graph.md": (
-            "Cartografia — Grafo de Modulos",
+            "Cartography — Module Graph",
             706,
-            "Mesmo grafo agregado por modulo, com o acoplamento entre modulos.",
+            "The same graph aggregated per module, with inter-module coupling.",
         ),
     }
     results: list[PageResult] = []
@@ -192,7 +192,7 @@ def _synthetic_results(paths: list[Path], config: WikiConfig) -> list[PageResult
                     key=f"cartography.{path.stem}",
                     path=rel,
                     title=title,
-                    section="7. Cartografia do Codigo",
+                    section="sec.cartography",
                     kind="cartography",
                     order=order,
                     prompt="",
@@ -206,11 +206,11 @@ def _synthetic_results(paths: list[Path], config: WikiConfig) -> list[PageResult
 
 # ----------------------------------------------------------------------
 def _plan_targets(config: WikiConfig) -> list[WikiConfig]:
-    """Uma wiki por repositorio.
+    """One wiki per repository.
 
-    Se o caminho indicado agregar varios repositorios git, cada um recebe a sua
-    propria wiki em `<repo>/wiki` — misturar projetos independentes numa so wiki
-    produz arquitetura, stack e glossario que nao descrevem nenhum deles.
+    If the given path holds several git repositories, each gets its own wiki in
+    `<repo>/wiki` — mixing independent projects into a single wiki produces an
+    architecture, stack and glossary that describe none of them.
     """
     if config.extra.get("single"):
         return [config]
@@ -228,7 +228,7 @@ def _plan_targets(config: WikiConfig) -> list[WikiConfig]:
             output_path=(
                 Path(output_root) / repo.name if output_root else repo / "wiki"
             ),
-            project_name=None,  # cada repo usa o seu proprio nome
+            project_name=None,  # each repo uses its own name
         )
         child.extra = dict(config.extra)
         targets.append(child)
@@ -239,10 +239,10 @@ async def run_all(config: WikiConfig) -> int:
     targets = _plan_targets(config)
 
     if len(targets) > 1:
-        print(f"Detetados {len(targets)} repositorios git em {config.repo_path}:", flush=True)
+        print(f"Found {len(targets)} git repositories in {config.repo_path}:", flush=True)
         for target in targets:
             print(f"  - {target.repo_path.name:<24} -> {target.output_path}", flush=True)
-        print("Uma wiki por repositorio. Usa --single para gerar uma so.\n", flush=True)
+        print("One wiki per repository. Use --single to generate a single one.\n", flush=True)
 
     exit_code = 0
     for index, target in enumerate(targets, start=1):
@@ -259,21 +259,21 @@ async def run_all(config: WikiConfig) -> int:
 
 
 async def run(config: WikiConfig) -> int:
-    print(f"Repositorio: {config.repo_path}", flush=True)
-    print(f"Saida:       {config.output_path}", flush=True)
-    print(f"Modelo:      {config.model}  (concorrencia {config.concurrency})", flush=True)
+    print(f"Repository: {config.repo_path}", flush=True)
+    print(f"Output:     {config.output_path}", flush=True)
+    print(f"Model:      {config.model}  (concurrency {config.concurrency})", flush=True)
     print()
 
-    print("A analisar o repositorio...", flush=True)
+    print("Scanning repository...", flush=True)
     scan = scan_repo(config)
     print(
-        f"  {len(scan.files)} ficheiros | {len(scan.source_files)} de codigo | "
-        f"{scan.total_lines} linhas | {len(scan.modules)} modulos"
+        f"  {len(scan.files)} files | {len(scan.source_files)} source | "
+        f"{scan.total_lines} lines | {len(scan.modules)} modules"
     )
     if scan.sensitive_skipped:
         print(
-            f"  ! {len(scan.sensitive_skipped)} ficheiros com aspeto de credenciais "
-            "excluidos do scan:"
+            f"  ! {len(scan.sensitive_skipped)} credential-looking files excluded "
+            "from the scan:"
         )
         for path in scan.sensitive_skipped[:10]:
             print(f"      {path}")
@@ -283,27 +283,28 @@ async def run(config: WikiConfig) -> int:
     graph = None
     graph_ctx = ""
     if config.extra.get("cartography", True):
-        print("A construir o grafo de dependencias (code cartography)...", flush=True)
+        print("Building the dependency graph (code cartography)...", flush=True)
         graph = build_graph(scan, config)
         graph_ctx = graph_context(graph)
         print(
-            f"  {len(graph.nodes)} nos | {len(graph.edges)} ligacoes | "
-            f"{len(graph.cycles(limit=100))} ciclos | "
-            f"{len(graph.orphans())} ficheiros isolados"
+            f"  {len(graph.nodes)} nodes | {len(graph.edges)} edges | "
+            f"{len(graph.cycles(limit=100))} cycles | "
+            f"{len(graph.orphans())} orphan files"
         )
 
     specs = build_plan(scan, config, graph_ctx)
     if not specs:
-        print("Nenhuma pagina a gerar (verifica --only).", file=sys.stderr)
+        print("No pages to generate (check --only).", file=sys.stderr)
         return 1
 
-    print(f"\nPlano: {len(specs)} paginas geradas por modelo", flush=True)
+    noun = "page" if len(specs) == 1 else "pages"
+    print(f"\nPlan: {len(specs)} model-generated {noun}", flush=True)
     if config.dry_run:
         for spec in specs:
             print(f"  - {spec.path:<52} {spec.title}")
         if graph is not None:
-            print("  - 07-cartography/file-graph.md      (deterministico)")
-            print("  - 07-cartography/module-graph.md    (deterministico)")
+            print("  - 07-cartography/file-graph.md      (deterministic)")
+            print("  - 07-cartography/module-graph.md    (deterministic)")
         return 0
 
     config.output_path.mkdir(parents=True, exist_ok=True)
@@ -311,8 +312,8 @@ async def run(config: WikiConfig) -> int:
     generator = WikiGenerator(config, scan)
     report = await generator.generate(specs)
 
-    # O indice tem de listar a wiki toda, nao so o que foi gerado nesta corrida:
-    # com --only, montar o indice a partir do subconjunto apagaria as restantes.
+    # The index must list the whole wiki, not just what this run generated:
+    # with --only, building it from the subset would drop every other page.
     results = list(report.results)
     if config.only:
         generated_keys = {r.spec.key for r in results}
@@ -323,17 +324,17 @@ async def run(config: WikiConfig) -> int:
     if graph is not None:
         written = write_cartography(graph, config)
         results += _synthetic_results(written, config)
-        print(f"\nCartografia escrita: {len(written)} ficheiros em 07-cartography/")
+        print(f"\nCartography written: {len(written)} files in 07-cartography/")
 
     nav_files = assemble(config, scan, results)
 
-    # Um wikilink partido aponta para uma nota que nunca vai existir: degrada-se
-    # para texto simples, e o que foi degradado e reportado.
+    # A broken wikilink points at a note that will never exist: it is degraded
+    # to plain text, and what was degraded is reported.
     link_report = validate_and_fix(config.output_path)
     if link_report["broken"]:
         print(
-            f"\nLinks: {link_report['checked']} verificados, "
-            f"{link_report['broken']} sem destino -> convertidos em texto",
+            f"\nLinks: {link_report['checked']} checked, "
+            f"{link_report['broken']} with no target -> converted to plain text",
             flush=True,
         )
         for src, target in link_report["details"][:8]:
@@ -341,18 +342,18 @@ async def run(config: WikiConfig) -> int:
         if link_report["broken"] > 8:
             print(f"  ... (+{link_report['broken'] - 8})")
 
-    # Reverificacao a ler do disco: apanha o caso em que algo escreveu por cima
-    # depois da validacao. Silencio aqui e a unica prova de que a wiki fechou limpa.
+    # Re-check reading from disk: catches the case where something wrote over
+    # the pages after validation. Silence here is the only proof the wiki is clean.
     recheck = validate_and_fix(config.output_path, fix=False)
     if recheck["broken"]:
         print(
-            f"  ! {recheck['broken']} links continuam sem destino apos a correcao "
-            "— alguma escrita ocorreu depois da validacao",
+            f"  ! {recheck['broken']} links still have no target after the fix "
+            "— something wrote to the wiki after validation",
             file=sys.stderr,
         )
 
-    # As citacoes `ficheiro:linha` sao a classe de erro que sobrevive a um modelo
-    # forte; parte dela e mecanicamente detetavel.
+    # `file:line` citations are the error class that survives a strong model;
+    # part of it is mechanically detectable.
     citation_report = check_citations(
         config.output_path, config.repo_path,
         repo_files=[f.rel_path for f in scan.files],
@@ -361,16 +362,16 @@ async def run(config: WikiConfig) -> int:
         print("\n" + format_report(citation_report), file=sys.stderr)
 
     print()
-    print(f"Geradas:  {len(report.generated)}")
-    print(f"Em cache: {len(report.cached)}")
+    print(f"Generated: {len(report.generated)}")
+    print(f"Cached:    {len(report.cached)}")
     if report.failed:
-        print(f"Falhadas: {len(report.failed)}", file=sys.stderr)
+        print(f"Failed:    {len(report.failed)}", file=sys.stderr)
         for result in report.failed:
             print(f"  ! {result.spec.path}: {result.error[:200]}", file=sys.stderr)
-    print(f"Tempo:    {report.elapsed_s:.1f}s")
+    print(f"Time:      {report.elapsed_s:.1f}s")
     if report.total_cost_usd:
-        print(f"Custo:    ${report.total_cost_usd:.4f}")
-    print(f"\nWiki em: {nav_files[0]}")
+        print(f"Cost:      ${report.total_cost_usd:.4f}")
+    print(f"\nWiki at: {nav_files[0]}")
 
     return 1 if report.failed else 0
 
@@ -380,23 +381,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = _config_from_args(args)
     except (ValueError, OSError) as exc:
-        print(f"Erro de configuracao: {exc}", file=sys.stderr)
+        print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
 
     if not config.dry_run:
         try:
             ensure_cli_available(config)
         except ClaudeError as exc:
-            print(f"Erro: {exc}", file=sys.stderr)
+            print(f"Error: {exc}", file=sys.stderr)
             return 2
 
     try:
         return asyncio.run(run_all(config))
     except KeyboardInterrupt:
-        print("\nInterrompido.", file=sys.stderr)
+        print("\nInterrupted.", file=sys.stderr)
         return 130
     except (ValueError, OSError, ClaudeError) as exc:
-        print(f"Erro: {exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
 
