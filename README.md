@@ -21,6 +21,7 @@ wiki-generator --source ~/code/my-project
 - [Code cartography](#code-cartography)
 - [Built-in verification](#built-in-verification)
 - [Semantic verification (`--verify`)](#semantic-verification---verify)
+- [Running on AWS with Bedrock](#running-on-aws-with-bedrock)
 - [Choosing a model](#choosing-a-model)
 - [Options reference](#options-reference)
 - [How it works](#how-it-works)
@@ -523,6 +524,104 @@ Use `--verify-fail-on any|high` for CI, which makes surviving findings exit **4*
 
 ---
 
+## Running on AWS with Bedrock
+
+By default the generator uses the Claude Code subscription already logged in on
+your machine. `--bedrock` switches the model to **Amazon Bedrock**, which is what
+makes it runnable on infrastructure where no one can log in interactively.
+
+```bash
+wiki-generator --source /repos --output /wikis --bedrock --aws-region us-east-1
+```
+
+Credentials are never passed by this tool. `--bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1`
+and the region, and leaves everything else to the AWS credential chain — the ECS
+task role, the EC2 instance profile, `AWS_PROFILE`, `~/.aws`. That is the point:
+on Fargate the role is resolved per call, and there is no key to leak.
+
+### It fails before the run, not during it
+
+A generation run is tens of minutes. Every way Bedrock can be misconfigured
+surfaces on the first model call, where it is indistinguishable from a transient
+error — so the region and credential chain are checked up front instead:
+
+```
+Error: Bedrock needs a region. Pass --aws-region, or set AWS_REGION.
+```
+
+A missing region is fatal. Absent credentials are only a warning, because on
+EC2, ECS and EKS they legitimately do not exist until the call is made.
+
+`--verbose` adds the caller identity (`aws sts get-caller-identity`) so a run
+that reaches the wrong account says so in its first three lines.
+
+### Throttling is retried; permission errors are not
+
+Bedrock names its failures rather than numbering them, and it throttles harder
+than the subscription. `ThrottlingException`, `ServiceUnavailableException` and
+`ModelNotReadyException` are retried with backoff. `AccessDeniedException`,
+`ExpiredToken`, `ValidationException` and a missing credential chain are **not** —
+retrying those only burns the clock on a run that cannot succeed.
+
+### Cost reporting differs, and the budget adapts
+
+The subscription reports a price per call, which is what `--verify-max-usd`
+counts against. Bedrock bills your account directly and may report nothing. When
+no call comes back priced, the dollar ceiling would silently stop being a ceiling —
+so it is converted into a page limit at the measured rate (~$0.50/page) and the
+report says so. The generation summary says `not reported by Bedrock` rather than
+printing `$0.00`, which would read as "it was free".
+
+### Container and task definition
+
+`deploy/` has a working starting point:
+
+| File | What it is |
+|---|---|
+| `deploy/Dockerfile` | node + `claude` CLI + python, **running as non-root** |
+| `deploy/ecs-task-definition.json` | Fargate task: repos mounted read-only, wikis on EFS |
+| `deploy/task-role-policy.json` | The IAM the task role actually needs |
+
+```bash
+docker build -t wiki-generator -f deploy/Dockerfile .
+```
+
+Three details in there are load-bearing:
+
+**The container does not run as root.** There is no terminal to answer a
+permission prompt, so the generator runs with `--permission-mode bypassPermissions`,
+and Claude Code refuses to bypass prompts as root. The image runs as uid 1000, so
+the EFS access point must let uid 1000 write.
+
+**Repositories are mounted read-only.** The generator only ever reads them; the
+mount makes that a guarantee rather than a promise.
+
+**`stopTimeout` is 120 seconds.** ECS sends `SIGTERM` before `SIGKILL`, and the
+generator treats `SIGTERM` exactly like Ctrl-C: stop the model calls, roll the
+wiki back to its previous state, exit. Too short a timeout turns a stopped task
+into a half-written wiki.
+
+Keep the output volume between runs. The incremental cache and the rollback
+journal live beside the wiki, so a second run regenerates only what changed —
+throw the volume away and every run pays for the whole wiki again.
+
+### Model IDs
+
+`--model` is passed to the CLI unchanged, so both the aliases and full Bedrock
+identifiers work:
+
+```bash
+--model haiku
+--model us.anthropic.claude-haiku-4-5-20251001-v1:0
+```
+
+Which Claude models your account can invoke, and whether they need a cross-region
+inference profile, is an AWS-side question — check **Bedrock → Model access** in
+the region you are running in. A model you have not been granted returns
+`AccessDeniedException`, which the generator reports verbatim and does not retry.
+
+---
+
 ## Choosing a model
 
 The default is `haiku` because it is cheap and fast. But in a real audit — 7 repositories
@@ -627,6 +726,13 @@ drift as code is edited and no model gets them reliably right.
 | `--no-rollback` | Keep an interrupted run's partial output instead of rolling it back |
 | `--verbose`, `-v` | Also report each page as it starts |
 
+### Provider
+
+| Flag | Default | Description |
+|---|---|---|
+| `--bedrock` | off | Run the model on Amazon Bedrock instead of the subscription |
+| `--aws-region` | `AWS_REGION` | Region for Bedrock; required with `--bedrock` |
+
 ### Verification
 
 Off by default — see [Semantic verification](#semantic-verification---verify).
@@ -686,7 +792,8 @@ instructions**.
 - C# namespaces, bundler aliases (`@/components`) and dependency injection do not yield
   reliable edges; they show up as unresolved rather than as invented edges.
 - Go packages are directories, not files: an import links to a representative file.
-- No API key required, but it consumes your Claude Code subscription quota.
+- No API key required, but it consumes your Claude Code subscription quota —
+  or, with `--bedrock`, your AWS account's Bedrock spend.
 
 > The whole codebase is in English: CLI, comments, docstrings and prompts. Wiki content
 > follows `--language` — page titles, index and cartography come from `i18n.py`, and the

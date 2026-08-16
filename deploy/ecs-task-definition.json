@@ -1,0 +1,87 @@
+{
+  "family": "wiki-generator",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "networkMode": "awsvpc",
+  "cpu": "1024",
+  "memory": "4096",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/wiki-generator-execution",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/wiki-generator-task",
+  "volumes": [
+    {
+      "name": "repos",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-CHANGEME",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "fsap-REPOS-CHANGEME",
+          "iam": "ENABLED"
+        }
+      }
+    },
+    {
+      "name": "wikis",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-CHANGEME",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "fsap-CHANGEME",
+          "iam": "ENABLED"
+        }
+      }
+    }
+  ],
+  "containerDefinitions": [
+    {
+      "name": "wiki-generator",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/wiki-generator:latest",
+      "essential": true,
+      "readonlyRootFilesystem": false,
+      "user": "1000:1000",
+      "command": [
+        "--source",
+        "/repos",
+        "--output",
+        "/wikis",
+        "--bedrock",
+        "--model",
+        "haiku",
+        "--concurrency",
+        "4"
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "repos",
+          "containerPath": "/repos",
+          "readOnly": true
+        },
+        {
+          "sourceVolume": "wikis",
+          "containerPath": "/wikis",
+          "readOnly": false
+        }
+      ],
+      "environment": [
+        {
+          "name": "AWS_REGION",
+          "value": "REGION"
+        }
+      ],
+      "stopTimeout": 120,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/wiki-generator",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "run",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}
