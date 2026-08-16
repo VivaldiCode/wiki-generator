@@ -167,7 +167,9 @@ class WikiGenerator:
                 eta = f"~{(self._total - self._done) / rate / 60:.0f}m" if rate else "?"
                 print(
                     f"    ... {self._done}/{self._total} done | "
-                    f"{self._in_flight} in flight | {elapsed / 60:.0f}m elapsed | "
+                    f"{min(self._in_flight, self.config.concurrency)} running, "
+                    f"{max(0, self._in_flight - self.config.concurrency)} queued | "
+                    f"{elapsed / 60:.0f}m elapsed | "
                     f"ETA {eta}",
                     flush=True,
                 )
@@ -188,6 +190,9 @@ class WikiGenerator:
 
         if self.config.verbose:
             print(f"    -> generating {spec.path}", flush=True)
+        # Counts pages awaiting the concurrency semaphore as well as those
+        # actually running; the ticker splits the two so "34 in flight" at
+        # concurrency 4 does not read as 34 simultaneous model calls.
         self._in_flight += 1
         try:
             response = await runner.run(spec.prompt, self.system_prompt, spec.key)

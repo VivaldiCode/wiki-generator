@@ -56,6 +56,22 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
             known.append(rel)
     line_counts: dict[str, int | None] = {}
 
+    ends_with_newline: dict[str, bool] = {}
+
+    def trailing_newline(rel: str) -> bool:
+        if rel not in ends_with_newline:
+            try:
+                with (repo_root / rel).open("rb") as handle:
+                    handle.seek(0, 2)
+                    if handle.tell() == 0:
+                        ends_with_newline[rel] = False
+                    else:
+                        handle.seek(-1, 2)
+                        ends_with_newline[rel] = handle.read(1) == b"\n"
+            except OSError:
+                ends_with_newline[rel] = False
+        return ends_with_newline[rel]
+
     def lines_in(rel: str) -> int | None:
         if rel not in line_counts:
             path = repo_root / rel
@@ -77,6 +93,7 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
     unrooted: list[tuple[str, str, str]] = []
     missing_file: list[tuple[str, str]] = []
     out_of_range: list[tuple[str, str, int, int]] = []
+    phantom_line: list[tuple[str, str, int, int]] = []
 
     for page in iter_pages(wiki_root):
         page_rel = str(page.relative_to(wiki_root))
@@ -108,7 +125,15 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
                     missing_file.append((page_rel, rel))
             else:
                 last = int(end) if end else start
-                if last > count or start < 1:
+                # A file ending in a newline has a phantom empty line after it:
+                # `wc -l` and this counter say N, an editor shows N+1. A citation
+                # of N+1 is pointing at what the model was shown, not inventing
+                # a location — two models from different vendors produced the
+                # identical `ci.yml:234` on a 233-line file. Reporting that as
+                # "invalid", next to "this file does not exist", overstates it.
+                if last == count + 1 and trailing_newline(rel):
+                    phantom_line.append((page_rel, rel, last, count))
+                elif last > count or start < 1:
                     out_of_range.append((page_rel, rel, last, count))
 
     return {
@@ -118,6 +143,7 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
         "out_of_range": out_of_range,
         "invalid": len(missing_file) + len(out_of_range),
         "unrooted_count": len(unrooted),
+        "phantom_line": phantom_line,
     }
 
 
@@ -127,10 +153,17 @@ def format_report(result: dict, limit: int = 10) -> str:
             f"Citations: {result['checked']} checked, all point at existing "
             "files and lines."
         )
+    phantom = len(result.get("phantom_line") or ())
+    if not result["invalid"] and not result["unrooted_count"] and not phantom:
+        return (
+            f"Citations: {result['checked']} checked, all point at existing "
+            "files and lines."
+        )
     lines = [
         f"Citations: {result['checked']} checked, "
         f"{result['invalid']} invalid, "
-        f"{result['unrooted_count']} with a path not rooted at the repository",
+        f"{result['unrooted_count']} with a path not rooted at the repository"
+        + (f", {phantom} on the empty line a trailing newline creates" if phantom else ""),
     ]
     for page, rel, real in result["unrooted"][:limit]:
         lines.append(f"  ~ {page}: `{rel}` -> should be `{real}`")
