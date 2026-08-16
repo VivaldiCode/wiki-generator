@@ -168,9 +168,7 @@ class ClaudeRunner:
         self._write_log(log_name, attempt, argv, prompt, system_prompt,
                         stdout_text, stderr_text, process.returncode)
         if process.returncode != 0:
-            raise ClaudeError(
-                f"claude exited with code {process.returncode}: {stderr_text[:800] or '(no stderr)'}"
-            )
+            raise ClaudeError(_diagnose(stdout_text, stderr_text, process.returncode))
 
         response = _parse_json_output(stdout_text)
         self.total_cost_usd += response.cost_usd
@@ -233,14 +231,15 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
         pass
 
 
-def _parse_json_output(raw: str) -> ClaudeResponse:
+def _payload_from(raw: str) -> dict | None:
+    """The JSON object the CLI printed, tolerating noise around it."""
     raw = raw.strip()
     if not raw:
-        raise ClaudeError("The CLI returned empty stdout.")
+        return None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        # Fallback: the CLI may have written noise before the JSON — try the last line.
+        payload = None
         for line in reversed(raw.splitlines()):
             line = line.strip()
             if line.startswith("{"):
@@ -249,11 +248,51 @@ def _parse_json_output(raw: str) -> ClaudeResponse:
                     break
                 except json.JSONDecodeError:
                     continue
-        else:
-            raise ClaudeError(f"Non-JSON output from the CLI: {raw[:500]}") from None
+    return payload if isinstance(payload, dict) else None
 
-    if isinstance(payload, dict) and payload.get("is_error"):
-        raise ClaudeError(f"Error reported by the CLI: {payload.get('result', payload)}")
+
+def _diagnose(stdout_text: str, stderr_text: str, returncode: int | None) -> str:
+    """Explain a nonzero exit.
+
+    In `--output-format json` the CLI reports the real cause on **stdout** — an
+    unknown model, an expired session, an API status — and leaves stderr empty.
+    Reading only stderr produced "exited with code 1: (no stderr)", which says
+    nothing to the user and, worse, hid the "429"/"usage limit" text that decides
+    whether the call is retried at all.
+    """
+    payload = _payload_from(stdout_text)
+    if payload:
+        result = payload.get("result")
+        detail = result if isinstance(result, str) and result.strip() else ""
+        status = payload.get("api_error_status")
+        reason = payload.get("terminal_reason")
+        parts = [p for p in (detail, stderr_text) if p]
+        if status:
+            parts.append(f"HTTP {status}")
+        if reason and reason not in detail:
+            parts.append(str(reason))
+        if parts:
+            return " | ".join(parts)[:800]
+    if stderr_text:
+        return f"claude exited with code {returncode}: {stderr_text[:800]}"
+    excerpt = " ".join(stdout_text.split())[:300]
+    return (
+        f"claude exited with code {returncode} without a diagnostic"
+        + (f" (stdout: {excerpt})" if excerpt else "")
+        + ". Run with --log-dir to record the full call."
+    )
+
+
+def _parse_json_output(raw: str) -> ClaudeResponse:
+    raw = raw.strip()
+    if not raw:
+        raise ClaudeError("The CLI returned empty stdout.")
+    payload = _payload_from(raw)
+    if payload is None:
+        raise ClaudeError(f"Non-JSON output from the CLI: {raw[:500]}") from None
+
+    if payload.get("is_error"):
+        raise ClaudeError(_diagnose(raw, "", None))
 
     text = payload.get("result") if isinstance(payload, dict) else None
     # Under --json-schema the CLI returns a JSON *string* today, but a future

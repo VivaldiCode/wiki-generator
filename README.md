@@ -184,7 +184,42 @@ the fourth only — the three already committed are complete and correct, and st
 
 Use `--no-rollback` to keep a partial run's output and continue from it incrementally.
 
-### 8. Incremental regeneration
+### 8. When a page fails
+
+A failed page does not abandon the run — the other pages are still written, the index is
+still built, and the exit code is `1`.
+
+What the CLI prints is the diagnostic the CLI actually reported, grouped by cause. A run
+usually fails for one reason, and repeating it once per page buries the line you have to
+act on:
+
+```
+Failed:    19
+  ! Claude usage limit reached | HTTP 429
+      01-overview/introduction.md
+      01-overview/tech-stack.md
+      ... and 17 more
+  19 page(s) need another run. Repeat the same command without --force: only what is
+  missing or out of date is regenerated.
+```
+
+The index says the same thing, under **Pages that failed**, and distinguishes three
+outcomes — because they need different things from you:
+
+| | What it means | What to do |
+|---|---|---|
+| **not written** | No file. Links to it were degraded to plain text. | Run again |
+| **out of date** | The previous version is still there, but the sources changed | Run again |
+| **no harm done** | The version on disk already matches the sources | Nothing |
+
+The third is the common one, and the reason a failed page is **not** dropped from the
+index: the file opens perfectly well, so removing it would shrink the wiki over a
+transient error.
+
+A second run costs a fraction of the first — only missing and out-of-date pages are
+regenerated. Do not add `--force`, which would pay for every page again.
+
+### 9. Incremental regeneration
 
 Every page stores a fingerprint of the source files it was built from, in
 `.wiki-manifest.json`. On a second run, only pages whose source files changed are
@@ -198,7 +233,7 @@ wiki-generator --source ~/code/my-project --force # ignore the cache
 Changing the model, the language or the wiki structure also invalidates the cache
 automatically.
 
-### 9. Regenerate only part of it
+### 10. Regenerate only part of it
 
 ```bash
 # one specific page
@@ -213,7 +248,7 @@ wiki-generator --source . --only module --only reference
 
 The index still lists the whole wiki, not just what was regenerated.
 
-### 10. Save logs for debugging
+### 11. Save logs for debugging
 
 ```bash
 wiki-generator --source ~/code/my-project --log-dir /tmp/wg-logs
@@ -226,7 +261,7 @@ suffix. When a page comes out wrong, this is where you find out why.
 > Logs contain the full prompt, which includes manifest excerpts and your repository's
 > file tree. Treat the log folder with the same care as the code.
 
-### 11. Large repositories
+### 12. Large repositories
 
 ```bash
 wiki-generator --source . \
@@ -236,7 +271,7 @@ wiki-generator --source . \
   --exclude '**/*.pb.go'
 ```
 
-### 12. Language
+### 13. Language
 
 The wiki content language is configurable:
 
@@ -244,7 +279,7 @@ The wiki content language is configurable:
 wiki-generator --source . --language pt     # en (default), pt, pt-br, es, fr, de, it
 ```
 
-### 13. Configuration file
+### 14. Configuration file
 
 ```bash
 wiki-generator --config wiki.config.json

@@ -12,6 +12,26 @@ from .i18n import translator
 from .utils import human_size, wikilink
 
 
+# Enough to see the pattern, short enough that the index stays an index.
+FAILED_PAGE_CAP = 10
+
+
+def _failure_state(result: PageResult, t) -> str:
+    if not result.kept_previous:
+        return t("index.failed.missing")
+    if result.previous_is_current:
+        return t("index.failed.current")
+    return t("index.failed.stale")
+
+
+def _one_line(text: str, limit: int = 220) -> str:
+    """Collapse an error to a single readable line, safe inside a table or list."""
+    flat = " ".join(str(text).split()).replace("|", "\\|")
+    if not flat:
+        return "no diagnostic"
+    return flat[:limit] + ("..." if len(flat) > limit else "")
+
+
 def _group_by_section(results: list[PageResult]) -> dict[str, list[PageResult]]:
     grouped: dict[str, list[PageResult]] = {}
     for result in results:
@@ -31,7 +51,10 @@ def _ordered_sections(grouped: dict[str, list[PageResult]]) -> list[str]:
 def write_index(
     config: WikiConfig, scan: RepoScan, results: list[PageResult]
 ) -> Path:
-    usable = [r for r in results if r.ok]
+    # A page whose file is on disk belongs in the index even if this run failed to
+    # refresh it: excluding it would silently shrink the wiki because of a
+    # transient error, and the reader would lose a page that opens perfectly well.
+    usable = [r for r in results if r.readable]
     grouped = _group_by_section(usable)
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -73,9 +96,35 @@ def write_index(
 
     failed = [r for r in results if r.status == "failed"]
     if failed:
-        lines += [f"### {t('index.failed')}", ""]
-        lines += [f"- `{r.spec.path}` — {r.error[:200]}" for r in failed]
-        lines.append("")
+        lines += [f"### {t('index.failed')}", "", t("index.failed.intro"), ""]
+        # One error repeated over nineteen pages is one error, not nineteen. A run
+        # usually fails for a single reason, and listing it once per page buries
+        # what the reader needs to fix.
+        groups: dict[str, list[PageResult]] = {}
+        for result in failed:
+            groups.setdefault(_one_line(result.error), []).append(result)
+        for error, pages in groups.items():
+            states = {_failure_state(result, t) for result in pages}
+            # When every page in the group failed the same way, the state belongs in
+            # the heading once, not repeated down twenty bullet points.
+            shared = states.pop() if len(states) == 1 else ""
+            lines += [f"**{error}**" + (f" — {shared}" if shared else ""), ""]
+            for result in pages[:FAILED_PAGE_CAP]:
+                suffix = "" if shared else f" — {_failure_state(result, t)}"
+                lines.append(
+                    f"- {wikilink(result.spec.path, result.spec.title)}{suffix}"
+                )
+            if len(pages) > FAILED_PAGE_CAP:
+                lines.append(
+                    t("index.failed.more", count=len(pages) - FAILED_PAGE_CAP)
+                )
+            lines.append("")
+
+        if any(not r.previous_is_current for r in failed):
+            lines += [t("index.failed.retry", section=t("index.regenerate")), ""]
+        missing = [r for r in failed if not r.kept_previous]
+        if missing:
+            lines += [t("index.failed.links", count=len(missing)), ""]
 
     lines += [
         f"## {t('index.regenerate')}",
@@ -99,7 +148,7 @@ def write_index(
 def write_summary(config: WikiConfig, results: list[PageResult]) -> Path:
     """SUMMARY.md — linear index, useful as an entry note in a vault."""
     t = translator(config.language)
-    grouped = _group_by_section([r for r in results if r.ok])
+    grouped = _group_by_section([r for r in results if r.readable])
     lines = [f"# {t('summary.title')}", "", f"- {wikilink('README', t('summary.index'))}", ""]
     for section in _ordered_sections(grouped):
         lines.append(f"## {t(section)}")

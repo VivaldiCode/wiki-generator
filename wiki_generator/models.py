@@ -91,7 +91,18 @@ class PageResult:
     cost_usd: float = 0.0
     duration_ms: int = 0
     num_turns: int = 0
+    # A page can fail while a readable version from an earlier run is still on
+    # disk. Dropping it from the index would lose a page the reader can open.
+    kept_previous: bool = False
+    # And that version may still match the sources it was generated from, in which
+    # case nothing is out of date and there is nothing for the reader to do.
+    previous_is_current: bool = False
 
     @property
     def ok(self) -> bool:
         return self.status in {"generated", "cached"}
+
+    @property
+    def readable(self) -> bool:
+        """Has a file the reader can open, even if this run failed to refresh it."""
+        return self.ok or self.kept_previous

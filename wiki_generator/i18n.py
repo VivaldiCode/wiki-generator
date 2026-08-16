@@ -111,6 +111,25 @@ STRINGS: dict[str, dict[str, str]] = {
         "index.generated_at": "Generated at",
         "index.contents": "Contents",
         "index.failed": "Pages that failed",
+        "index.failed.intro": (
+            "These pages were not produced in the last run. Everything else on this "
+            "index was."
+        ),
+        "index.failed.stale": "out of date, showing the previous version",
+        "index.failed.current": (
+            "no harm done: the version on disk already matches the sources"
+        ),
+        "index.failed.missing": "not written — the note does not exist",
+        "index.failed.more": "- ... and {count} more with the same error",
+        "index.failed.retry": (
+            "Run the command under **{section}** again: only pages that are missing "
+            "or out of date are regenerated, so a second run costs a fraction of the "
+            "first. Do not add `--force` — it would pay for every page again."
+        ),
+        "index.failed.links": (
+            "<sub>{count} page(s) have no file, so links pointing at them were "
+            "degraded to plain text.</sub>"
+        ),
         "index.regenerate": "How to regenerate",
         "index.incremental": (
             "Only pages whose source files changed are regenerated. "
@@ -345,6 +364,26 @@ STRINGS: dict[str, dict[str, str]] = {
         "index.generated_at": "Gerado em",
         "index.contents": "Indice",
         "index.failed": "Paginas com falha",
+        "index.failed.intro": (
+            "Estas paginas nao foram produzidas na ultima execucao. Todo o resto "
+            "deste indice foi."
+        ),
+        "index.failed.stale": "desatualizada, mostra a versao anterior",
+        "index.failed.current": (
+            "sem estragos: a versao em disco ja corresponde as fontes"
+        ),
+        "index.failed.missing": "nao foi escrita — a nota nao existe",
+        "index.failed.more": "- ... e mais {count} com o mesmo erro",
+        "index.failed.retry": (
+            "Corre outra vez o comando em **{section}**: so sao regeradas as paginas "
+            "em falta ou desatualizadas, por isso uma segunda execucao custa uma "
+            "fracao da primeira. Nao acrescentes `--force` — pagava outra vez todas "
+            "as paginas."
+        ),
+        "index.failed.links": (
+            "<sub>{count} pagina(s) sem ficheiro, por isso as ligacoes que lhes "
+            "apontavam foram degradadas para texto simples.</sub>"
+        ),
         "index.regenerate": "Como regerar",
         "index.incremental": (
             "Apenas as paginas cujos ficheiros de origem mudaram sao regeradas. "

@@ -509,17 +509,38 @@ async def run(
     if citation_report["invalid"]:
         print("\n" + format_report(citation_report), file=sys.stderr)
 
-    print()
-    print(f"Generated: {len(report.generated)}")
-    print(f"Cached:    {len(report.cached)}")
+    print(flush=True)
+    print(f"Generated: {len(report.generated)}", flush=True)
+    print(f"Cached:    {len(report.cached)}", flush=True)
     if report.failed:
-        print(f"Failed:    {len(report.failed)}", file=sys.stderr)
+        print(f"Failed:    {len(report.failed)}", file=sys.stderr, flush=True)
+        # Grouped by error: a run almost always fails for one reason, and printing
+        # it once per page buries the one line the user has to act on.
+        groups: dict[str, list[PageResult]] = {}
         for result in report.failed:
-            print(f"  ! {result.spec.path}: {result.error[:200]}", file=sys.stderr)
-    print(f"Time:      {report.elapsed_s:.1f}s")
+            groups.setdefault(result.error[:300], []).append(result)
+        for error, pages in groups.items():
+            print(f"  ! {error}", file=sys.stderr)
+            for result in pages[:5]:
+                print(f"      {result.spec.path}", file=sys.stderr)
+            if len(pages) > 5:
+                print(f"      ... and {len(pages) - 5} more", file=sys.stderr)
+        stale = [r for r in report.failed if not r.previous_is_current]
+        if stale:
+            # The index says this too, but nobody opens the index to fix a run.
+            print(
+                f"  {len(stale)} page(s) need another run. Repeat the same command "
+                "without --force: only what is missing or out of date is "
+                "regenerated.",
+                file=sys.stderr, flush=True,
+            )
+        else:
+            print("  Every failed page already had an up-to-date version on disk.",
+                  file=sys.stderr, flush=True)
+    print(f"Time:      {report.elapsed_s:.1f}s", flush=True)
     if report.total_cost_usd:
-        label = "Cost:      " if not config.verify else "Generation:"
-        print(f"{label} ${report.total_cost_usd:.4f}")
+        label = "Cost:" if not config.verify else "Generation:"
+        print(f"{label:<11}${report.total_cost_usd:.4f}", flush=True)
     print(f"\nWiki at: {nav_files[0]}")
 
     # Only now is the wiki coherent: pages, cartography, index and validation all

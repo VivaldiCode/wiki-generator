@@ -212,8 +212,16 @@ class WikiGenerator:
                         missing=", ".join(f"`{m.lstrip('# ')}`" for m in missing),
                     ) + "\n"
         except ClaudeError as exc:
-            self._report(spec, "failed", str(exc))
-            return PageResult(spec=spec, status="failed", error=str(exc))
+            # Whatever is on disk was written by a successful run. If its recorded
+            # fingerprint still matches, it describes the sources as they are now:
+            # the failure cost nothing but the retry. Only a mismatch means stale.
+            kept = target.is_file()
+            current = kept and self.manifest.get(spec.key) == fingerprint
+            self._report(spec, "failed", str(exc), kept, current)
+            return PageResult(
+                spec=spec, status="failed", error=str(exc),
+                kept_previous=kept, previous_is_current=current,
+            )
         finally:
             self._in_flight -= 1
 
@@ -257,12 +265,18 @@ class WikiGenerator:
         )
         return markdown.rstrip() + footer
 
-    def _report(self, spec: PageSpec, status: str, detail: str = "") -> None:
+    def _report(
+        self, spec: PageSpec, status: str, detail: str = "", kept: bool = False,
+        current: bool = False,
+    ) -> None:
         self._printed += 1
         self._done += 1
         icon = {"generated": "+", "cached": "=", "failed": "!"}.get(status, "?")
         line = f"[{self._printed}/{self._total}] {icon} {spec.path}"
         if detail:
             line += f"  -> {detail[:160]}"
+        if kept:
+            line += ("  (previous version still matches the sources)" if current
+                     else "  (kept the previous version, now out of date)")
         stream = sys.stderr if status == "failed" else sys.stdout
         print(line, file=stream, flush=True)
