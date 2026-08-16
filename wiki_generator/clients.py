@@ -55,6 +55,19 @@ class Client:
     default_model: str = ""
     capabilities = Capabilities()
 
+    # Tool names are per-CLI and are a safety boundary, not a preference: an
+    # allowlist naming tools a CLI does not have restricts nothing and fails
+    # open. Measured on Grok — `--tools Read,Glob,Grep` left the terminal tool
+    # in place, `--tools read_file,list_dir,grep` removed it.
+    read_tools: tuple[str, ...] = ()
+    subagent_tool: str = ""
+    # Denied by name as a second lock, in case an allowlist is ever ignored.
+    write_tools: tuple[str, ...] = ()
+
+    def tool_set(self, with_subagents: bool = False) -> tuple[str, ...]:
+        extra = (self.subagent_tool,) if with_subagents and self.subagent_tool else ()
+        return self.read_tools + extra
+
     def warnings(self) -> list[str]:
         """What the user should know before a paid run starts."""
         if self.capabilities.verified:
@@ -102,9 +115,12 @@ class ClaudeClient(Client):
         cost=True, stdin_prompt=True, verified=True,
     )
     default_model = "haiku"
+    read_tools = ("Read", "Glob", "Grep")
+    subagent_tool = "Agent"
+    write_tools = ("Write", "Edit", "Bash")
 
     def argv(self, binary: str, config, system_prompt: str, options) -> list[str]:
-        tools = options.tools if options.tools is not None else config.tools
+        tools = options.tools if options.tools is not None else self.tool_set()
         argv = [
             binary,
             "--print",
@@ -185,21 +201,22 @@ class GrokClient(Client):
     binary = "grok"
     capabilities = Capabilities(
         json_schema=True, subagents=True, tool_restriction=True,
-        # Unverified until a signed-in run confirms the envelope. Declared False
-        # so a dollar budget degrades to a page limit rather than silently
-        # counting to zero forever.
-        cost=False,
+        # Confirmed on a signed-in run: the envelope carries `total_cost_usd`
+        # and a `usage` block with the same token field names.
+        cost=True,
         # `-p` takes the prompt as an argument; `--prompt-file` is used instead.
         stdin_prompt=False,
-        # Mapped from `--help`. The CLI gates every call on authentication
-        # before it validates anything else, so neither the built-in tool names
-        # nor the success envelope could be confirmed from here.
-        verified=False,
+        verified=True,
     )
-    default_model = "grok-code-fast-1"
+    # From `grok models`. Note the internal name reported in `modelUsage`
+    # ("grok-4.6-build") is not a valid `--model` value.
+    default_model = "grok-4.6"
+    read_tools = ("read_file", "list_dir", "grep")
+    subagent_tool = "spawn_subagent"
+    write_tools = ("run_terminal_command", "search_replace", "write_file")
 
     def argv(self, binary: str, config, system_prompt: str, options) -> list[str]:
-        tools = options.tools if options.tools is not None else config.tools
+        tools = options.tools if options.tools is not None else self.tool_set()
         argv = [
             binary,
             "--output-format", "json",
@@ -221,9 +238,8 @@ class GrokClient(Client):
         if system_prompt:
             # Append, never override: the CLI's own tool instructions must stay.
             argv += ["--rules", system_prompt]
-        # A second lock that does not depend on knowing this CLI's tool names:
-        # even if the allowlist above matches nothing, these are denied by name.
-        for rule in ("Write", "Edit", "Bash"):
+        # A second lock, in case an allowlist is ever ignored.
+        for rule in self.write_tools:
             argv += ["--deny", rule]
         if config.isolated:
             argv += ["--disable-web-search", "--no-memory", "--no-plan"]
@@ -236,7 +252,9 @@ class GrokClient(Client):
         usage = payload.get("usage")
         usage = usage if isinstance(usage, dict) else {}
         return {
-            "text": _first(payload, "result", "response", "text", "content"),
+            # Confirmed shape: {"text": ..., "sessionId": ..., "usage": {...},
+            # "num_turns": N, "total_cost_usd": F}. No duration is reported.
+            "text": _first(payload, "text", "result", "response", "content"),
             "cost_usd": _first(payload, "total_cost_usd", "cost_usd"),
             "duration_ms": _first(payload, "duration_ms", "elapsed_ms"),
             "num_turns": _first(payload, "num_turns", "turns"),

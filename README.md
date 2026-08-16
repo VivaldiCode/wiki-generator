@@ -545,7 +545,7 @@ wiki-generator --repo ~/code/api --client grok
 | Client | Binary | Default model | Auth |
 |---|---|---|---|
 | `claude` *(default)* | `claude` | `haiku` | Claude Code subscription, or `--bedrock` |
-| `grok` | `grok` | `grok-code-fast-1` | `grok login`, or `XAI_API_KEY` |
+| `grok` | `grok` | `grok-4.6` | `grok login`, or `XAI_API_KEY` |
 
 Model aliases do not travel between clients — `haiku` means nothing to Grok — so
 each client names its own default and `--model` overrides it.
@@ -563,25 +563,30 @@ Error: --verify needs JSON schemas and subagents, which the 'x' client does not 
 cost turns the `--verify-max-usd` dollar ceiling into a page limit (see
 [Cost tracking](#cost-tracking)).
 
-### Verified vs mapped-from-help
+### Tool names are a safety boundary, not a preference
 
-The `claude` adapter is confirmed against a signed-in CLI: the flags, the JSON
-envelope, subagent fan-out and schema output were all probed. The `grok` adapter
-is mapped from its `--help` output, and says so on every run:
+**An allowlist naming tools a CLI does not have restricts nothing, and fails
+open.** This is measured, not theoretical. Asked to run `whoami` under two
+allowlists, the same CLI:
 
-```
-! The 'grok' client is mapped from its `--help` output and has not been
-  confirmed against a signed-in run. If the tool allowlist names tools this CLI
-  does not have, it may restrict nothing — mount the repository read-only if
-  that matters.
-```
+| `--tools` | What happened |
+|---|---|
+| `read_file,list_dir,grep` (its real names) | *"I have no terminal tool in this session"* |
+| `Read,Glob,Grep` (another CLI's names) | *"I'll run `whoami` in the terminal"* |
 
-That warning is not boilerplate. The tool allowlist is the only thing standing
-between an agentic CLI and your working tree, and `--tools` naming a tool the
-CLI does not have may restrict nothing at all. The Grok adapter therefore adds
-`--deny Write --deny Edit --deny Bash` as a second lock that does not depend on
-knowing the tool names — but until a signed-in run confirms both, treat a
-read-only mount as the real guarantee.
+So tool names live in the client adapter, never in shared configuration, and
+each adapter also denies its write tools by name as a second lock. Confirmed
+with the generator's own argv: no terminal, no file writes, no file created.
+
+An adapter is marked **verified** only once its flags, tool names and JSON
+envelope have been confirmed against a signed-in run. An unverified one warns on
+every run rather than implying a guarantee it has not earned. Both shipped
+adapters are verified.
+
+A model's account of its own tools is *not* evidence: asked what it had, this
+CLI confidently reported "5 native + 525 via MCP (333 pfSense, 192 Portainer)"
+while `grok mcp list` reported none configured. Only behaviour counts — ask it
+to do the thing and see whether it can.
 
 ### Adding one
 

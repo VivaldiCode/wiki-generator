@@ -23,7 +23,9 @@ class WikiConfig:
     timeout: int = 600
     max_retries: int = 2
     permission_mode: str = "bypassPermissions"
-    tools: tuple[str, ...] = ("Read", "Glob", "Grep")
+    # Left empty on purpose: the tool names are the client's, because a name
+    # the CLI does not have restricts nothing. Set it only to override.
+    tools: tuple[str, ...] = ()
     max_budget_usd: float | None = None
     isolated: bool = True
     # Which agentic CLI runs the prompts. See clients.py.

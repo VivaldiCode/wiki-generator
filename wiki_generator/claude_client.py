@@ -291,22 +291,24 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
 
 
 def _payload_from(raw: str) -> dict | None:
-    """The JSON object the CLI printed, tolerating noise around it."""
+    """The JSON object the CLI printed, tolerating noise around it.
+
+    Output shapes differ: Claude prints one compact line, Grok pretty-prints and
+    on failure appends a plain `Error: ...` line after the JSON. Decoding from
+    the first `{` and ignoring whatever trails it covers every combination —
+    a line-based scan does not, because a pretty-printed object's first line is
+    a bare `{`.
+    """
     raw = raw.strip()
     if not raw:
         return None
+    start = raw.find("{")
+    if start == -1:
+        return None
     try:
-        payload = json.loads(raw)
+        payload, _ = json.JSONDecoder().raw_decode(raw[start:])
     except json.JSONDecodeError:
-        payload = None
-        for line in reversed(raw.splitlines()):
-            line = line.strip()
-            if line.startswith("{"):
-                try:
-                    payload = json.loads(line)
-                    break
-                except json.JSONDecodeError:
-                    continue
+        return None
     return payload if isinstance(payload, dict) else None
 
 

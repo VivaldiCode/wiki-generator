@@ -29,6 +29,7 @@ from pathlib import Path
 
 from . import STRUCTURE_VERSION
 from .claude_client import CallOptions, ClaudeError, ClaudeRunner, TokenUsage
+from .clients import get as get_client
 from .config import WikiConfig
 from .models import RepoScan
 from .utils import sha1_text
@@ -58,10 +59,10 @@ ANALYTICAL_KEYS = (
     "operations.configuration",
 )
 
-# Subagents inherit the parent's tool allowlist in the CLI tested against, but
+# Tool names come from the client, never from a constant: an allowlist naming
+# tools a CLI does not have restricts nothing and fails open (measured).
+# Subagents inherit the parent's allowlist in the CLI tested against, but
 # pinning it is free and does not depend on that staying true.
-CHECKER_TOOLS = ["Read", "Glob", "Grep"]
-PARENT_TOOLS = ("Read", "Glob", "Grep", "Agent")
 
 
 # ----------------------------------------------------------------------
@@ -261,6 +262,9 @@ class Verifier:
             self.wiki_prefix = str(config.output_path.relative_to(config.repo_path))
         except ValueError:
             self.wiki_prefix = str(config.output_path)
+        self.client = get_client(config.client)
+        self.checker_tools = list(self.client.tool_set())
+        self.parent_tools = self.client.tool_set(with_subagents=True)
         self.system = system_prompt(config.repo_path, self.wiki_prefix)
         self._semaphore = asyncio.Semaphore(max(1, config.verify_concurrency))
         self._agents_json = json.dumps(
@@ -274,7 +278,7 @@ class Verifier:
                         "CONTRADICTED, the file path and line that proves it, and one "
                         "sentence on what the code actually shows. Nothing else."
                     ),
-                    "tools": CHECKER_TOOLS,
+                    "tools": self.checker_tools,
                 }
             }
         )
@@ -288,7 +292,7 @@ class Verifier:
     def _options(self, schema: dict) -> CallOptions:
         return CallOptions(
             model=self.config.verify_model,
-            tools=PARENT_TOOLS,
+            tools=self.parent_tools,
             agents_json=self._agents_json,
             json_schema=json.dumps(schema),
             timeout=self.config.verify_timeout,
