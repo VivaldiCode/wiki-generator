@@ -26,7 +26,9 @@ class WikiConfig:
     tools: tuple[str, ...] = ("Read", "Glob", "Grep")
     max_budget_usd: float | None = None
     isolated: bool = True
-    claude_bin: str = "claude"
+    # Which agentic CLI runs the prompts. See clients.py.
+    client: str = "claude"
+    claude_bin: str | None = None   # override the client's own binary name
     log_dir: Path | None = None
 
     # --- provider ---
@@ -73,6 +75,11 @@ class WikiConfig:
     # filled at runtime; never read from the config file
     extra: dict = field(default_factory=dict)
 
+    @property
+    def binary(self) -> str:
+        from .clients import get
+        return self.claude_bin or get(self.client).binary
+
     def __post_init__(self) -> None:
         self.repo_path = Path(self.repo_path).expanduser().resolve()
         self.output_path = Path(self.output_path).expanduser().resolve()
@@ -103,6 +110,12 @@ class WikiConfig:
     def fingerprint_fields(self) -> dict:
         """Options whose change must invalidate the page cache."""
         return {
+            # Only when it is not the default. A page written by Grok is not
+            # interchangeable with one written by Claude, so the client belongs
+            # in the fingerprint — but adding it unconditionally would invalidate
+            # every existing wiki's cache and charge every user a full
+            # regeneration for a feature they are not using.
+            **({"client": self.client} if self.client != "claude" else {}),
             "model": self.model,
             "language": self.language,
             "audience": self.audience,

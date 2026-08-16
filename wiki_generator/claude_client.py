@@ -11,9 +11,12 @@ import asyncio
 import json
 import os
 import shutil
+import tempfile
+from pathlib import Path
 from dataclasses import dataclass, field
 
 from . import providers
+from .clients import Client, get as get_client
 from .config import WikiConfig
 
 
@@ -87,13 +90,18 @@ class ClaudeResponse:
     usage: TokenUsage = field(default_factory=TokenUsage)
 
 
+INSTALL_HINT = {
+    "claude": "Install Claude Code and authenticate (`claude`, then /login).",
+    "grok": "Install Grok and authenticate (`grok login`, or set XAI_API_KEY).",
+}
+
+
 def ensure_cli_available(config: WikiConfig) -> str:
-    path = shutil.which(config.claude_bin)
+    binary = config.binary
+    path = shutil.which(binary)
     if not path:
-        raise ClaudeError(
-            f"CLI '{config.claude_bin}' not found on PATH. "
-            "Install Claude Code and authenticate with your subscription (`claude auth`)."
-        )
+        hint = INSTALL_HINT.get(config.client, "")
+        raise ClaudeError(f"CLI '{binary}' not found on PATH. {hint}".strip())
     return path
 
 
@@ -102,6 +110,7 @@ class ClaudeRunner:
 
     def __init__(self, config: WikiConfig) -> None:
         self.config = config
+        self.client: Client = get_client(config.client)
         self.binary = ensure_cli_available(config)
         self._semaphore = asyncio.Semaphore(max(1, config.concurrency))
         self.total_cost_usd = 0.0
@@ -114,45 +123,15 @@ class ClaudeRunner:
 
     # ------------------------------------------------------------------
     def _build_argv(self, system_prompt: str, options: CallOptions) -> list[str]:
-        config = self.config
-        tools = options.tools if options.tools is not None else config.tools
-        argv = [
-            self.binary,
-            "--print",
-            "--output-format", "json",
-            "--model", options.model or config.model,
-            "--permission-mode", config.permission_mode,
-            "--no-session-persistence",
-        ]
-        if tools:
-            argv += ["--tools", ",".join(tools)]
-        if options.agents_json:
-            argv += ["--agents", options.agents_json]
-        if options.json_schema:
-            argv += ["--json-schema", options.json_schema]
-        if system_prompt:
-            argv += ["--append-system-prompt", system_prompt]
-        if config.fallback_model:
-            argv += ["--fallback-model", config.fallback_model]
-        if config.max_budget_usd is not None:
-            argv += ["--max-budget-usd", str(config.max_budget_usd)]
-        if config.isolated:
-            # No MCP servers and no skills: deterministic and cheaper generation.
-            argv += ["--strict-mcp-config", "--disable-slash-commands"]
-        return argv
+        return self.client.argv(self.binary, self.config, system_prompt, options)
 
     def _env(self) -> dict[str, str]:
         env = dict(os.environ)
         # Useful marker for user-side hooks and telemetry.
         env["WIKI_GENERATOR"] = "1"
-        if self.config.provider == providers.BEDROCK:
-            # The CLI selects its provider from the environment, not from argv.
-            # Credentials are deliberately left to the AWS chain: on ECS and EKS
-            # the task role is resolved at call time and there is nothing here
-            # to pass along.
-            env.update(
-                providers.bedrock_env(providers.resolved_region(self.config.aws_region))
-            )
+        # The CLI selects its provider from the environment, not from argv, and
+        # which variables those are is the client's business.
+        env.update(self.client.env(self.config))
         return env
 
     # ------------------------------------------------------------------
@@ -192,39 +171,57 @@ class ClaudeRunner:
     ) -> ClaudeResponse:
         options = options or CallOptions()
         argv = self._build_argv(system_prompt, options)
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(self.config.repo_path),
-            env=self._env(),
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(prompt.encode("utf-8")),
-                timeout=options.timeout or self.config.timeout,
+
+        # A dense reference page's prompt exceeds the argv length limit, so a
+        # client that cannot read stdin gets a file instead of a longer command.
+        stdin_payload = self.client.stdin_payload(prompt)
+        prompt_file: Path | None = None
+        if stdin_payload is None:
+            prompt_file = Path(
+                tempfile.mkstemp(prefix="wiki-prompt-", suffix=".txt")[1]
             )
-        except asyncio.TimeoutError:
-            await _terminate(process)
-            raise ClaudeError(
-                f"Timed out after {options.timeout or self.config.timeout}s"
-            ) from None
-        except asyncio.CancelledError:
-            # The run is being torn down (Ctrl-C, a failure elsewhere). Without
-            # this the CLI child keeps running detached, burning quota against a
-            # wiki that is about to be rolled back.
-            await _terminate(process)
-            raise
+            prompt_file.write_text(prompt, encoding="utf-8")
+            argv += ["--prompt-file", str(prompt_file)]
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.config.repo_path),
+                env=self._env(),
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(stdin_payload),
+                    timeout=options.timeout or self.config.timeout,
+                )
+            except asyncio.TimeoutError:
+                await _terminate(process)
+                raise ClaudeError(
+                    f"Timed out after {options.timeout or self.config.timeout}s"
+                ) from None
+            except asyncio.CancelledError:
+                # The run is being torn down (Ctrl-C, a failure elsewhere).
+                # Without this the CLI child keeps running detached, burning
+                # quota against a wiki that is about to be rolled back.
+                await _terminate(process)
+                raise
+        finally:
+            if prompt_file is not None:
+                prompt_file.unlink(missing_ok=True)
 
         stdout_text = stdout.decode("utf-8", "replace")
         stderr_text = stderr.decode("utf-8", "replace").strip()
         self._write_log(log_name, attempt, argv, prompt, system_prompt,
                         stdout_text, stderr_text, process.returncode)
         if process.returncode != 0:
-            raise ClaudeError(_diagnose(stdout_text, stderr_text, process.returncode))
+            raise ClaudeError(
+                _diagnose(stdout_text, stderr_text, process.returncode, self.client)
+            )
 
-        response = _parse_json_output(stdout_text)
+        response = _parse_json_output(stdout_text, self.client)
         self.total_cost_usd += response.cost_usd
         self.total_calls += 1
         if response.cost_usd > 0:
@@ -313,7 +310,10 @@ def _payload_from(raw: str) -> dict | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _diagnose(stdout_text: str, stderr_text: str, returncode: int | None) -> str:
+def _diagnose(
+    stdout_text: str, stderr_text: str, returncode: int | None,
+    client: Client | None = None,
+) -> str:
     """Explain a nonzero exit.
 
     In `--output-format json` the CLI reports the real cause on **stdout** — an
@@ -324,15 +324,11 @@ def _diagnose(stdout_text: str, stderr_text: str, returncode: int | None) -> str
     """
     payload = _payload_from(stdout_text)
     if payload:
-        result = payload.get("result")
-        detail = result if isinstance(result, str) and result.strip() else ""
-        status = payload.get("api_error_status")
-        reason = payload.get("terminal_reason")
+        client = client or get_client("claude")
+        # The CLI's own words first: they are the only thing that names the
+        # actual cause (an unknown model, an expired session, a missing role).
+        detail = client.error_from(payload) or ""
         parts = [p for p in (detail, stderr_text) if p]
-        if status:
-            parts.append(f"HTTP {status}")
-        if reason and reason not in detail:
-            parts.append(str(reason))
         if parts:
             return " | ".join(parts)[:800]
     if stderr_text:
@@ -345,7 +341,8 @@ def _diagnose(stdout_text: str, stderr_text: str, returncode: int | None) -> str
     )
 
 
-def _parse_json_output(raw: str) -> ClaudeResponse:
+def _parse_json_output(raw: str, client: Client | None = None) -> ClaudeResponse:
+    client = client or get_client("claude")
     raw = raw.strip()
     if not raw:
         raise ClaudeError("The CLI returned empty stdout.")
@@ -353,10 +350,12 @@ def _parse_json_output(raw: str) -> ClaudeResponse:
     if payload is None:
         raise ClaudeError(f"Non-JSON output from the CLI: {raw[:500]}") from None
 
-    if payload.get("is_error"):
-        raise ClaudeError(_diagnose(raw, "", None))
+    error = client.error_from(payload)
+    if error:
+        raise ClaudeError(error)
 
-    text = payload.get("result") if isinstance(payload, dict) else None
+    fields = client.parse(payload)
+    text = fields.get("text")
     # Under --json-schema the CLI returns a JSON *string* today, but a future
     # version returning a parsed object must not hard-fail with a misleading error.
     if isinstance(text, (dict, list)):
@@ -364,8 +363,7 @@ def _parse_json_output(raw: str) -> ClaudeResponse:
     if not isinstance(text, str) or not text.strip():
         raise ClaudeError("Response has no usable 'result' field.")
 
-    raw_usage = payload.get("usage")
-    raw_usage = raw_usage if isinstance(raw_usage, dict) else {}
+    raw_usage = fields.get("usage") or {}
 
     def _count(name: str) -> int:
         try:
@@ -375,10 +373,10 @@ def _parse_json_output(raw: str) -> ClaudeResponse:
 
     return ClaudeResponse(
         text=text,
-        cost_usd=float(payload.get("total_cost_usd") or 0.0),
-        duration_ms=int(payload.get("duration_ms") or 0),
-        num_turns=int(payload.get("num_turns") or 0),
-        session_id=str(payload.get("session_id") or ""),
+        cost_usd=float(fields.get("cost_usd") or 0.0),
+        duration_ms=int(fields.get("duration_ms") or 0),
+        num_turns=int(fields.get("num_turns") or 0),
+        session_id=str(fields.get("session_id") or ""),
         usage=TokenUsage(
             input_tokens=_count("input_tokens"),
             output_tokens=_count("output_tokens"),

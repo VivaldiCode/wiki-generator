@@ -21,7 +21,7 @@ from .citations import check as check_citations, format_report
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
-from . import costs, providers
+from . import clients, costs, providers
 from .i18n import translator
 from .journal import RunJournal
 from . import verify as verify_mod
@@ -66,8 +66,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="JSON configuration file.")
 
     model = parser.add_argument_group("model")
+    model.add_argument("--client", default=None,
+                       choices=sorted(clients.CLIENTS),
+                       help=f"Which agentic CLI runs the prompts "
+                            f"(default: {clients.DEFAULT_CLIENT}).")
     model.add_argument("--model", "-m", default=None,
-                       help=f"Model to use (default: {DEFAULT_MODEL}).")
+                       help="Model to use (default: the client's own — "
+                            + ", ".join(f"{n}: {c.default_model}"
+                                        for n, c in sorted(clients.CLIENTS.items()))
+                            + ").")
     model.add_argument("--fallback-model", default=None,
                        help="Fallback model if the primary one is unavailable.")
     model.add_argument("--concurrency", "-j", type=int, default=None,
@@ -231,6 +238,12 @@ def _config_from_args(args: argparse.Namespace) -> WikiConfig:
 
     if args.no_reference:
         config.include_reference = False
+    if args.client:
+        config.client = args.client
+    if args.model is None:
+        # Model aliases do not travel between clients: "haiku" means nothing to
+        # Grok. Each client names its own default.
+        config.model = clients.get(config.client).default_model
     if args.bedrock:
         config.provider = providers.BEDROCK
     config.verify = args.verify
@@ -388,8 +401,8 @@ async def run(
         f"  via Bedrock ({providers.resolved_region(config.aws_region)})"
         if config.provider == providers.BEDROCK else ""
     )
-    print(f"Model:      {config.model}  (concurrency {config.concurrency}){where}",
-          flush=True)
+    print(f"Model:      {config.model} via {config.client}  "
+          f"(concurrency {config.concurrency}){where}", flush=True)
     print()
 
     # A marker left behind means the previous run died mid-way. Restore the wiki
@@ -784,6 +797,33 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(json.dumps(summary, indent=2, ensure_ascii=False))
         return 0
+
+    try:
+        client = clients.get(config.client)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    if config.provider == providers.BEDROCK and config.client != "claude":
+        print(f"Error: --bedrock routes Claude Code through Amazon Bedrock; the "
+              f"'{config.client}' client authenticates on its own.", file=sys.stderr)
+        return 2
+
+    missing = [
+        need for need, ok in (
+            ("JSON schemas", client.capabilities.json_schema),
+            ("subagents", client.capabilities.subagents),
+        ) if not ok
+    ]
+    if config.verify and missing:
+        # Better to say so now than to spend the generation and fail at the
+        # verification step, which runs last.
+        print(f"Error: --verify needs {' and '.join(missing)}, which the "
+              f"'{config.client}' client does not support.", file=sys.stderr)
+        return 2
+
+    for warning in client.warnings():
+        print(f"  ! {warning}", file=sys.stderr)
 
     try:
         # Before the CLI check, because a missing region is a configuration

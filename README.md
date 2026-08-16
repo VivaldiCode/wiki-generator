@@ -21,6 +21,7 @@ wiki-generator --source ~/code/my-project
 - [Code cartography](#code-cartography)
 - [Built-in verification](#built-in-verification)
 - [Semantic verification (`--verify`)](#semantic-verification---verify)
+- [Choosing a client](#choosing-a-client)
 - [Running on AWS with Bedrock](#running-on-aws-with-bedrock)
 - [Cost tracking](#cost-tracking)
 - [Choosing a model](#choosing-a-model)
@@ -525,6 +526,70 @@ Use `--verify-fail-on any|high` for CI, which makes surviving findings exit **4*
 
 ---
 
+## Choosing a client
+
+The generator never sends a repository's contents to a model. It runs an
+**agentic coding CLI** with read-only tools and lets the model open the files it
+needs — which is what keeps per-page cost flat on a large repository. Any CLI
+that can do four things can drive it:
+
+1. run a single prompt and exit (headless / print mode)
+2. read files itself
+3. be restricted to reading only
+4. report the result as JSON
+
+```bash
+wiki-generator --repo ~/code/api --client grok
+```
+
+| Client | Binary | Default model | Auth |
+|---|---|---|---|
+| `claude` *(default)* | `claude` | `haiku` | Claude Code subscription, or `--bedrock` |
+| `grok` | `grok` | `grok-code-fast-1` | `grok login`, or `XAI_API_KEY` |
+
+Model aliases do not travel between clients — `haiku` means nothing to Grok — so
+each client names its own default and `--model` overrides it.
+
+### Capabilities, and what happens without them
+
+Clients declare what they support, and features that need more than the client
+offers **refuse before the run starts** rather than failing at the end:
+
+```
+Error: --verify needs JSON schemas and subagents, which the 'x' client does not support.
+```
+
+`--verify` needs JSON schemas and subagents. A client that reports no per-call
+cost turns the `--verify-max-usd` dollar ceiling into a page limit (see
+[Cost tracking](#cost-tracking)).
+
+### Verified vs mapped-from-help
+
+The `claude` adapter is confirmed against a signed-in CLI: the flags, the JSON
+envelope, subagent fan-out and schema output were all probed. The `grok` adapter
+is mapped from its `--help` output, and says so on every run:
+
+```
+! The 'grok' client is mapped from its `--help` output and has not been
+  confirmed against a signed-in run. If the tool allowlist names tools this CLI
+  does not have, it may restrict nothing — mount the repository read-only if
+  that matters.
+```
+
+That warning is not boilerplate. The tool allowlist is the only thing standing
+between an agentic CLI and your working tree, and `--tools` naming a tool the
+CLI does not have may restrict nothing at all. The Grok adapter therefore adds
+`--deny Write --deny Edit --deny Bash` as a second lock that does not depend on
+knowing the tool names — but until a signed-in run confirms both, treat a
+read-only mount as the real guarantee.
+
+### Adding one
+
+Add a class to `wiki_generator/clients.py` with an `argv()`, a `parse()` and an
+`error_from()`. Nothing else in the codebase names a binary or a flag.
+
+---
+
 ## Running on AWS with Bedrock
 
 By default the generator uses the Claude Code subscription already logged in on
@@ -806,6 +871,7 @@ drift as code is edited and no model gets them reliably right.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--client` | `claude` | Which agentic CLI runs the prompts (`claude`, `grok`) |
 | `--bedrock` | off | Run the model on Amazon Bedrock instead of the subscription |
 | `--aws-region` | `AWS_REGION` | Region for Bedrock; required with `--bedrock` |
 
