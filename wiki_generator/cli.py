@@ -19,6 +19,7 @@ from .citations import check as check_citations, format_report
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
+from . import providers
 from .i18n import translator
 from .journal import RunJournal
 from . import verify as verify_mod
@@ -117,6 +118,16 @@ def build_parser() -> argparse.ArgumentParser:
     structure.add_argument("--exclude", action="append", default=None, metavar="GLOB",
                            help="Exclude files matching this glob (repeatable).")
 
+    provider = parser.add_argument_group("provider")
+    provider.add_argument("--bedrock", action="store_true",
+                          help="Run the model on Amazon Bedrock instead of the "
+                               "Claude subscription. Credentials come from the "
+                               "usual AWS chain (task role, instance profile, "
+                               "environment, ~/.aws).")
+    provider.add_argument("--aws-region", default=None, metavar="REGION",
+                          help="Region for Bedrock (default: AWS_REGION, then "
+                               "~/.aws/config). Required with --bedrock.")
+
     verification = parser.add_argument_group("verification (opt-in)")
     verification.add_argument("--verify", action="store_true",
                               help="After generating, check the wiki's factual claims "
@@ -191,6 +202,7 @@ def _config_from_args(args: argparse.Namespace) -> WikiConfig:
         "files_per_reference_page": args.files_per_reference_page,
         "max_reference_pages": args.max_reference_pages,
         "min_lines": args.min_lines,
+        "aws_region": args.aws_region,
         "verify_scope": args.verify_scope,
         "verify_model": args.verify_model,
         "verify_concurrency": args.verify_concurrency,
@@ -211,6 +223,8 @@ def _config_from_args(args: argparse.Namespace) -> WikiConfig:
 
     if args.no_reference:
         config.include_reference = False
+    if args.bedrock:
+        config.provider = providers.BEDROCK
     config.verify = args.verify
     config.force = args.force
     config.dry_run = args.dry_run
@@ -342,7 +356,12 @@ async def run(
     spend = spend if spend is not None else {"verify": 0.0}
     print(f"Repository: {config.repo_path}", flush=True)
     print(f"Output:     {config.output_path}", flush=True)
-    print(f"Model:      {config.model}  (concurrency {config.concurrency})", flush=True)
+    where = (
+        f"  via Bedrock ({providers.resolved_region(config.aws_region)})"
+        if config.provider == providers.BEDROCK else ""
+    )
+    print(f"Model:      {config.model}  (concurrency {config.concurrency}){where}",
+          flush=True)
     print()
 
     # A marker left behind means the previous run died mid-way. Restore the wiki
@@ -541,6 +560,11 @@ async def run(
     if report.total_cost_usd:
         label = "Cost:" if not config.verify else "Generation:"
         print(f"{label:<11}${report.total_cost_usd:.4f}", flush=True)
+    elif report.generated and config.provider == providers.BEDROCK:
+        # Silence here would read as "it was free". Bedrock bills the account
+        # directly; the CLI just isn't the thing that knows the price.
+        print("Cost:      not reported by Bedrock — see AWS Cost Explorer",
+              flush=True)
     print(f"\nWiki at: {nav_files[0]}")
 
     # Only now is the wiki coherent: pages, cartography, index and validation all
@@ -635,7 +659,9 @@ async def _verify_phase(
 
     print(f"  {verdict.pages_verified} verified, {verdict.pages_cached} cached | "
           f"{verdict.claims_checked} claim(s) | {len(verdict.findings)} finding(s), "
-          f"{len(verdict.overturned)} overturned | ${verdict.cost_usd:.2f}", flush=True)
+          f"{len(verdict.overturned)} overturned | "
+          + (f"${verdict.cost_usd:.2f}" if verdict.cost_reported else "cost not reported"),
+          flush=True)
     if verdict.pages_skipped:
         print(f"  {len(verdict.pages_skipped)} page(s) not verified: "
               + "; ".join(verdict.pages_skipped[:3])
@@ -647,8 +673,13 @@ async def _verify_phase(
               "evidence", file=sys.stderr, flush=True)
     # Printed here and not in the summary above: verification is often the more
     # expensive half, and the summary is written before it runs.
-    print(f"  Total for this repository: "
-          f"${generation_cost + verdict.cost_usd:.4f}", flush=True)
+    if verdict.cost_reported:
+        print(f"  Total for this repository: "
+              f"${generation_cost + verdict.cost_usd:.4f}", flush=True)
+    else:
+        print("  This backend does not price its calls, so the budget was "
+              f"enforced as a page limit instead (~${verify_mod.COST_PER_PAGE_USD:.2f}"
+              "/page assumed).", file=sys.stderr, flush=True)
     for finding in verdict.findings[:5]:
         print(f"  ! [{finding.severity}] {finding.page}: {finding.claim[:90]}")
     if len(verdict.findings) > 5:
@@ -667,6 +698,17 @@ def main(argv: list[str] | None = None) -> int:
         config = _config_from_args(args)
     except (ValueError, OSError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        # Before the CLI check, because a missing region is a configuration
+        # mistake whether or not the binary is installed.
+        for warning in providers.preflight(
+            config.provider, config.aws_region, config.verbose
+        ):
+            print(f"  ! {warning}", file=sys.stderr)
+    except providers.ProviderError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
 
     if not config.dry_run:

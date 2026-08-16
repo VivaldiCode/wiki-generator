@@ -70,6 +70,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "verify.m.findings": "Surviving findings",
         "verify.m.overturned": "Findings overturned on challenge",
         "verify.m.model": "Verifier model",
+        "verify.m.nocost": (
+            "This backend does not price its calls, so the budget was enforced "
+            "as a page limit."
+        ),
         "verify.m.claims": "Claims extracted",
         "verify.m.unanswered": "Claims left unanswered",
         "verify.m.rejected": "Contradictions dropped for unusable evidence",
@@ -323,6 +327,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "verify.m.findings": "Achados que sobreviveram",
         "verify.m.overturned": "Achados derrubados na contestacao",
         "verify.m.model": "Modelo verificador",
+        "verify.m.nocost": (
+            "Este backend nao atribui preco as chamadas, por isso o orcamento "
+            "foi aplicado como limite de paginas."
+        ),
         "verify.m.claims": "Afirmacoes extraidas",
         "verify.m.unanswered": "Afirmacoes sem resposta",
         "verify.m.rejected": "Contradicoes descartadas por evidencia inutilizavel",

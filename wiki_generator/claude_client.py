@@ -13,6 +13,7 @@ import os
 import shutil
 from dataclasses import dataclass
 
+from . import providers
 from .config import WikiConfig
 
 
@@ -65,6 +66,10 @@ class ClaudeRunner:
         self._semaphore = asyncio.Semaphore(max(1, config.concurrency))
         self.total_cost_usd = 0.0
         self.total_calls = 0
+        # Not every backend prices the call for us. Counting the calls that came
+        # back with a cost is what tells a zero total apart from a silent one —
+        # and a silent one turns every dollar ceiling into no ceiling at all.
+        self.calls_with_cost = 0
 
     # ------------------------------------------------------------------
     def _build_argv(self, system_prompt: str, options: CallOptions) -> list[str]:
@@ -99,6 +104,14 @@ class ClaudeRunner:
         env = dict(os.environ)
         # Useful marker for user-side hooks and telemetry.
         env["WIKI_GENERATOR"] = "1"
+        if self.config.provider == providers.BEDROCK:
+            # The CLI selects its provider from the environment, not from argv.
+            # Credentials are deliberately left to the AWS chain: on ECS and EKS
+            # the task role is resolved at call time and there is nothing here
+            # to pass along.
+            env.update(
+                providers.bedrock_env(providers.resolved_region(self.config.aws_region))
+            )
         return env
 
     # ------------------------------------------------------------------
@@ -173,7 +186,14 @@ class ClaudeRunner:
         response = _parse_json_output(stdout_text)
         self.total_cost_usd += response.cost_usd
         self.total_calls += 1
+        if response.cost_usd > 0:
+            self.calls_with_cost += 1
         return response
+
+    @property
+    def cost_is_reported(self) -> bool:
+        """False once calls have completed and none of them carried a price."""
+        return self.calls_with_cost > 0 or self.total_calls == 0
 
 
     # ------------------------------------------------------------------
@@ -318,9 +338,24 @@ _RETRYABLE_MARKERS = (
     "timeout", "timed out", "overloaded", "rate limit", "rate_limit", "429",
     "usage limit", "quota", "529", "503", "502",
     "connection", "temporarily", "econnreset", "socket hang up",
+    # Bedrock names its transient failures rather than numbering them, and it
+    # throttles harder than the subscription: without these, a run against a
+    # busy account gives up on the first burst.
+    "throttling", "throttled", "toomanyrequests", "serviceunavailable",
+    "modelnotready", "model is not ready", "internalfailure",
+    "internalservererror", "requesttimeout", "capacity",
+)
+
+# Failures where retrying only burns the clock: the caller must fix something.
+_PERMANENT_MARKERS = (
+    "could not load credentials", "security token", "accessdenied",
+    "unrecognizedclient", "expiredtoken", "invalidsignature",
+    "validationexception", "resourcenotfound", "is not authorized",
 )
 
 
 def _is_retryable(message: str) -> bool:
-    lowered = message.lower()
-    return any(marker in lowered for marker in _RETRYABLE_MARKERS)
+    lowered = message.lower().replace(" ", "")
+    if any(marker.replace(" ", "") in lowered for marker in _PERMANENT_MARKERS):
+        return False
+    return any(marker.replace(" ", "") in lowered for marker in _RETRYABLE_MARKERS)

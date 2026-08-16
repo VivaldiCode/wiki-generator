@@ -29,6 +29,12 @@ class WikiConfig:
     claude_bin: str = "claude"
     log_dir: Path | None = None
 
+    # --- provider ---
+    # Which backend serves the model. "subscription" uses the Claude Code login;
+    # "bedrock" switches the CLI to Amazon Bedrock and the AWS credential chain.
+    provider: str = "subscription"
+    aws_region: str | None = None
+
     # --- content ---
     language: str = "en"
     project_name: str | None = None

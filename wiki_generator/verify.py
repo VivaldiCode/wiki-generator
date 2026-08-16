@@ -193,6 +193,9 @@ class VerifyReport:
     evidence_rejected: int = 0
     cost_usd: float = 0.0
     partial: bool = False
+    # A backend that does not price its calls cannot be held to a dollar
+    # ceiling. Recorded so the report never prints $0.00 as if it were a fact.
+    cost_reported: bool = True
     error: str = ""
 
     @property
@@ -518,9 +521,25 @@ async def run_verification(
     cost_at_start = runner.total_cost_usd
     fingerprints: list[str] = []
 
+    # When the backend prices nothing, the dollar ceiling silently stops being
+    # a ceiling. Converting it to a page count at the measured rate keeps the
+    # limit the user asked for, in the only unit still available.
+    page_cap = (
+        int(config.verify_max_usd / COST_PER_PAGE_USD)
+        if config.verify_max_usd > 0 else 0
+    )
+
     for path, title, text in pages:
         spent = runner.total_cost_usd - cost_at_start
-        if config.verify_max_usd > 0 and spent >= config.verify_max_usd:
+        if not runner.cost_is_reported:
+            report.cost_reported = False
+            if page_cap and report.pages_verified >= page_cap:
+                report.partial = True
+                report.pages_skipped.append(
+                    f"{path} (page limit {page_cap}; this backend reports no cost)"
+                )
+                continue
+        elif config.verify_max_usd > 0 and spent >= config.verify_max_usd:
             report.partial = True
             report.pages_skipped.append(path)
             continue
@@ -587,6 +606,8 @@ def write_report(config: WikiConfig, report: VerifyReport, t) -> Path:
         lines += [t("verify.partial", pages=", ".join(report.pages_skipped)), ""]
     if report.claims_unanswered:
         lines += [t("verify.incomplete", count=report.claims_unanswered), ""]
+    if not report.cost_reported:
+        lines += [f"<sub>{t('verify.m.nocost')}</sub>", ""]
 
     if not report.pages_verified and not report.pages_cached:
         # "No contradicted claims found" would be a lie when nothing was read.
