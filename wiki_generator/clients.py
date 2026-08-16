@@ -21,7 +21,11 @@ binary or a flag.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from dataclasses import dataclass
+
+_OPENCODE_CONFIG_PATH: str | None = None
 
 
 @dataclass(frozen=True)
@@ -86,9 +90,22 @@ class Client:
     def env(self, config) -> dict[str, str]:
         return {}
 
+    # How the prompt reaches the CLI. "stdin" avoids every length limit;
+    # "file" writes a temp file and names it with `prompt_file_flag`; "argv"
+    # appends it as a positional argument and is bounded by ARG_MAX.
+    prompt_mode: str = "stdin"
+    prompt_file_flag: str = ""
+
     def stdin_payload(self, prompt: str) -> bytes | None:
-        """What to write to the child's stdin, or None to pass the prompt in argv."""
-        return prompt.encode("utf-8") if self.capabilities.stdin_prompt else None
+        """What to write to the child's stdin, or None when it goes in argv."""
+        return prompt.encode("utf-8") if self.prompt_mode == "stdin" else None
+
+    def attach_prompt(self, argv: list[str], prompt: str, path) -> None:
+        """Add the prompt to argv for the non-stdin modes."""
+        if self.prompt_mode == "file":
+            argv += [self.prompt_file_flag, str(path)]
+        elif self.prompt_mode == "argv":
+            argv.append(prompt)
 
     def parse(self, payload: dict) -> dict:
         """Normalise the CLI's JSON envelope to the generator's shape.
@@ -118,6 +135,7 @@ class ClaudeClient(Client):
     read_tools = ("Read", "Glob", "Grep")
     subagent_tool = "Agent"
     write_tools = ("Write", "Edit", "Bash")
+    prompt_mode = "stdin"
 
     def argv(self, binary: str, config, system_prompt: str, options) -> list[str]:
         tools = options.tools if options.tools is not None else self.tool_set()
@@ -214,6 +232,8 @@ class GrokClient(Client):
     read_tools = ("read_file", "list_dir", "grep")
     subagent_tool = "spawn_subagent"
     write_tools = ("run_terminal_command", "search_replace", "write_file")
+    prompt_mode = "file"
+    prompt_file_flag = "--prompt-file"
 
     def argv(self, binary: str, config, system_prompt: str, options) -> list[str]:
         tools = options.tools if options.tools is not None else self.tool_set()
@@ -273,6 +293,106 @@ class GrokClient(Client):
         return None
 
 
+class OpenCodeClient(Client):
+    """opencode (`opencode run`).
+
+    The furthest of the three from the generator's shape, and the differences
+    are structural rather than cosmetic:
+
+      * **No tool allowlist flag.** Permissions live in a config file, and
+        headless blocks on an approval prompt unless `--auto` is passed — which
+        auto-approves everything not explicitly denied. The adapter therefore
+        writes its own config with `bash`/`edit`/`write` denied and points
+        `OPENCODE_CONFIG` at it, so containment does not depend on whatever the
+        user has configured. That the CLI validates config keys (an invented key
+        is rejected) is evidence the keys are real; it is not evidence that the
+        denial takes effect.
+      * **No `--json-schema` and no inline subagent definitions**, so `--verify`
+        cannot run on this client. The capability flags say so and the CLI
+        refuses before generating rather than after.
+      * **`--format json` emits an event stream**, not one result object, so the
+        text has to be assembled from events rather than read from a field.
+    """
+
+    name = "opencode"
+    binary = "opencode"
+    capabilities = Capabilities(
+        json_schema=False,
+        subagents=False,
+        # No allowlist flag exists. Denial is configured, and unconfirmed.
+        tool_restriction=False,
+        cost=False,
+        stdin_prompt=False,
+        verified=False,
+    )
+    default_model = "anthropic/claude-haiku-4-5"
+    read_tools = ()
+    subagent_tool = ""
+    write_tools = ("bash", "edit", "write", "patch", "webfetch")
+    # `opencode run [message..]` takes the prompt positionally; there is no
+    # stdin or prompt-file path.
+    prompt_mode = "argv"
+
+    def warnings(self) -> list[str]:
+        return [
+            "The 'opencode' client has no tool-allowlist flag: read-only access "
+            "is configured, not enforced by argv, and could not be confirmed "
+            "behaviourally here. Run it against a repository you can afford to "
+            "have modified, or mount the repository read-only.",
+            "`--verify` is unavailable on this client: it has no JSON-schema "
+            "output and no inline subagent definitions.",
+        ]
+
+    def config_payload(self) -> dict:
+        """The config the adapter imposes, independent of the user's own."""
+        return {"permission": {tool: "deny" for tool in self.write_tools}}
+
+    def env(self, config) -> dict[str, str]:
+        # Written once per process and pointed at by OPENCODE_CONFIG, so the
+        # denials do not depend on the user's own config file. Confirmed that
+        # the variable is honoured and that the CLI rejects unknown keys.
+        global _OPENCODE_CONFIG_PATH
+        if _OPENCODE_CONFIG_PATH is None:
+            handle, path = tempfile.mkstemp(prefix="wiki-opencode-", suffix=".json")
+            with os.fdopen(handle, "w", encoding="utf-8") as out:
+                json.dump(self.config_payload(), out)
+            _OPENCODE_CONFIG_PATH = path
+        return {"OPENCODE_CONFIG": _OPENCODE_CONFIG_PATH}
+
+    def argv(self, binary: str, config, system_prompt: str, options) -> list[str]:
+        argv = [
+            binary, "run",
+            "--model", options.model or config.model,
+            "--format", "json",
+            # Without this the run blocks on an approval prompt that headless
+            # has no way to answer. It is only safe alongside the denials in
+            # `config_payload`, which is why the two ship together.
+            "--auto",
+        ]
+        return argv
+
+    def parse(self, payload: dict) -> dict:
+        usage = payload.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        return {
+            "text": _first(payload, "text", "result", "content", "message"),
+            "cost_usd": _first(payload, "cost", "total_cost_usd", "cost_usd"),
+            "duration_ms": _first(payload, "duration_ms"),
+            "num_turns": _first(payload, "num_turns", "turns"),
+            "session_id": _first(payload, "sessionID", "session_id", "id"),
+            "usage": usage,
+        }
+
+    def error_from(self, payload: dict) -> str | None:
+        if payload.get("type") == "error" or payload.get("name") in {
+            "UnknownError", "ProviderAuthError",
+        }:
+            data = payload.get("data")
+            message = (data or {}).get("message") if isinstance(data, dict) else None
+            return str(message or payload.get("message") or payload.get("name"))
+        return None
+
+
 def _first(payload: dict, *names: str):
     for name in names:
         if name in payload and payload[name] is not None:
@@ -284,6 +404,7 @@ def _first(payload: dict, *names: str):
 CLIENTS: dict[str, Client] = {
     ClaudeClient.name: ClaudeClient(),
     GrokClient.name: GrokClient(),
+    OpenCodeClient.name: OpenCodeClient(),
 }
 
 DEFAULT_CLIENT = ClaudeClient.name

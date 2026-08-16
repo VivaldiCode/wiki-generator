@@ -133,6 +133,11 @@ def build_parser() -> argparse.ArgumentParser:
                                       "--output and exit. Reads the per-run "
                                       "records left on the volume by earlier runs.")
 
+    model.add_argument("--allow-unrestricted-client", action="store_true",
+                       help="Run a client that cannot be restricted to read-only "
+                            "tools from the command line. The run may modify the "
+                            "repository.")
+
     provider = parser.add_argument_group("provider")
     provider.add_argument("--bedrock", action="store_true",
                           help="Run the model on Amazon Bedrock instead of the "
@@ -820,6 +825,18 @@ def main(argv: list[str] | None = None) -> int:
         # verification step, which runs last.
         print(f"Error: --verify needs {' and '.join(missing)}, which the "
               f"'{config.client}' client does not support.", file=sys.stderr)
+        return 2
+
+    if not client.capabilities.tool_restriction and not args.allow_unrestricted_client:
+        # The generator's promise is that it only reads the repository. A client
+        # with no allowlist cannot make that promise from argv, and a warning is
+        # demonstrably not enough — the Grok allowlist was found to fail open
+        # while looking correct. Opting in is explicit.
+        print(f"Error: the '{config.client}' client cannot be restricted to "
+              "read-only tools from the command line, so this run could modify "
+              f"{config.repo_path}. Pass --allow-unrestricted-client to accept "
+              "that, ideally with the repository mounted read-only.",
+              file=sys.stderr)
         return 2
 
     for warning in client.warnings():

@@ -542,10 +542,11 @@ that can do four things can drive it:
 wiki-generator --repo ~/code/api --client grok
 ```
 
-| Client | Binary | Default model | Auth |
-|---|---|---|---|
-| `claude` *(default)* | `claude` | `haiku` | Claude Code subscription, or `--bedrock` |
-| `grok` | `grok` | `grok-4.6` | `grok login`, or `XAI_API_KEY` |
+| Client | Binary | Default model | Auth | Verified |
+|---|---|---|---|---|
+| `claude` *(default)* | `claude` | `haiku` | Claude Code subscription, or `--bedrock` | yes |
+| `grok` | `grok` | `grok-4.6` | `grok login`, or `XAI_API_KEY` | yes |
+| `opencode` | `opencode` | `anthropic/claude-haiku-4-5` | `opencode auth login` | **no** |
 
 Model aliases do not travel between clients — `haiku` means nothing to Grok — so
 each client names its own default and `--model` overrides it.
@@ -587,6 +588,31 @@ A model's account of its own tools is *not* evidence: asked what it had, this
 CLI confidently reported "5 native + 525 via MCP (333 pfSense, 192 Portainer)"
 while `grok mcp list` reported none configured. Only behaviour counts — ask it
 to do the thing and see whether it can.
+
+### When a client cannot be restricted
+
+`opencode` has no tool-allowlist flag at all: permissions live in a config file,
+and headless blocks on an approval prompt unless `--auto` is passed, which
+approves everything not explicitly denied. The adapter writes its own config
+with `bash`, `edit`, `write`, `patch` and `webfetch` denied and points
+`OPENCODE_CONFIG` at it, so containment does not depend on the user's own
+config — but that is configured containment, not containment enforced by argv,
+and it has not been confirmed behaviourally.
+
+So the generator **refuses to run it** unless you say otherwise:
+
+```
+Error: the 'opencode' client cannot be restricted to read-only tools from the
+command line, so this run could modify /path/to/repo. Pass
+--allow-unrestricted-client to accept that, ideally with the repository mounted
+read-only.
+```
+
+A warning would not be enough. The Grok allowlist looked correct and failed open;
+that is the evidence this refusal is built on.
+
+`--verify` is unavailable on `opencode` — no JSON-schema output, no inline
+subagent definitions — and the run stops before generating rather than after.
 
 ### Adding one
 

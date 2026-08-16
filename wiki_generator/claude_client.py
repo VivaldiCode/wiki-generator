@@ -176,12 +176,12 @@ class ClaudeRunner:
         # client that cannot read stdin gets a file instead of a longer command.
         stdin_payload = self.client.stdin_payload(prompt)
         prompt_file: Path | None = None
-        if stdin_payload is None:
+        if self.client.prompt_mode == "file":
             prompt_file = Path(
                 tempfile.mkstemp(prefix="wiki-prompt-", suffix=".txt")[1]
             )
             prompt_file.write_text(prompt, encoding="utf-8")
-            argv += ["--prompt-file", str(prompt_file)]
+        self.client.attach_prompt(argv, prompt, prompt_file)
 
         try:
             process = await asyncio.create_subprocess_exec(
