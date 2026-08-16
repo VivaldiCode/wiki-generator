@@ -22,6 +22,14 @@ from .links import mask_fences
 CITATION = re.compile(r"`([\w./\-]+\.[A-Za-z0-9]{1,10}):(\d+)(?:-(\d+))?`")
 
 
+def _looks_like_host(segment: str) -> bool:
+    """`checkmarx.jfrog.io` yes; `.github` and `src` no."""
+    if not segment or segment.startswith("."):
+        return False
+    head, _, tail = segment.rpartition(".")
+    return bool(head) and len(tail) >= 2 and tail.isalpha()
+
+
 def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None) -> dict:
     """Check each citation against the real file. Changes nothing.
 
@@ -83,6 +91,12 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
             # Only counts as a citation if the path exists in the repository or
             # looks like a code path — avoids matching `version:1.2` and similar.
             if "/" not in rel and not (repo_root / rel).exists():
+                continue
+            # A container image with a dotted version and a numeric tag has the
+            # same shape as a citation: `registry.example.io/img-9.7.7:977`
+            # parses as file `...img-9.7.7` at line 977. Nothing in a repository
+            # is addressed by hostname, so a leading host segment settles it.
+            if _looks_like_host(rel.split("/")[0]) and len(rel.split("/")) > 1:
                 continue
             total += 1
             count = lines_in(rel)

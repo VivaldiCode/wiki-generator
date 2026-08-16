@@ -408,6 +408,10 @@ _PERMANENT_MARKERS = (
     "could not load credentials", "security token", "accessdenied",
     "unrecognizedclient", "expiredtoken", "invalidsignature",
     "validationexception", "resourcenotfound", "is not authorized",
+    # An expired SSO session needs `aws sso login`, not another attempt. It was
+    # already not being retried, but only because no retryable marker happened
+    # to match — which is luck, not a decision.
+    "sso session token", "aws sso login", "was not found or is invalid",
 )
 
 
