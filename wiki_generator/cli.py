@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import signal
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,7 +21,7 @@ from .citations import check as check_citations, format_report
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
-from . import providers
+from . import costs, providers
 from .i18n import translator
 from .journal import RunJournal
 from . import verify as verify_mod
@@ -117,6 +119,12 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Only analyse files matching this glob (repeatable).")
     structure.add_argument("--exclude", action="append", default=None, metavar="GLOB",
                            help="Exclude files matching this glob (repeatable).")
+
+    behaviour_costs = parser.add_argument_group("cost tracking")
+    behaviour_costs.add_argument("--costs-report", action="store_true",
+                                 help="Print the aggregated cost ledger for "
+                                      "--output and exit. Reads the per-run "
+                                      "records left on the volume by earlier runs.")
 
     provider = parser.add_argument_group("provider")
     provider.add_argument("--bedrock", action="store_true",
@@ -286,8 +294,17 @@ def _plan_targets(config: WikiConfig) -> list[WikiConfig]:
         return [config]
 
     repos = find_repositories(config.repo_path)
-    if len(repos) <= 1:
+    if not repos:
         return [config]
+    if len(repos) == 1 and repos[0] == config.repo_path:
+        # The given path is itself the repository.
+        return [config]
+    if len(repos) == 1 and not config.extra.get("output_root"):
+        # One repository inside a plain folder, and no explicit output: the wiki
+        # goes in `<repo>/wiki` as usual, but it must be scoped to the repository
+        # rather than to the folder that happens to contain it.
+        return [replace(config, repo_path=repos[0],
+                        output_path=repos[0] / "wiki", project_name=None)]
 
     # Smallest repositories first. A long multi-repo run is far more useful when
     # the quick wins land early: you get complete wikis to look at within minutes,
@@ -354,6 +371,17 @@ async def run(
 ) -> int:
     skipped = skipped if skipped is not None else []
     spend = spend if spend is not None else {"verify": 0.0}
+    started = time.monotonic()
+    record = costs.RunRecord(
+        repo=config.repo_path.name,
+        repo_path=str(config.repo_path),
+        wiki_path=str(config.output_path),
+        status="failed",  # replaced on every path that completes
+        provider=config.provider,
+        model=config.model,
+        aws_region=(providers.resolved_region(config.aws_region)
+                    if config.provider == providers.BEDROCK else None),
+    )
     print(f"Repository: {config.repo_path}", flush=True)
     print(f"Output:     {config.output_path}", flush=True)
     where = (
@@ -397,6 +425,7 @@ async def run(
         # Not a failure: there is genuinely nothing to document.
         print(f"  Skipped: {exc}", flush=True)
         skipped.append((config.repo_path.name, str(exc)))
+        _record_cost(config, record, "skipped", started, skip_reason=str(exc))
         return 0
     print(
         f"  {len(scan.files)} files | {len(scan.source_files)} source | "
@@ -420,6 +449,7 @@ async def run(
         )
         print(f"  Skipped: {reason}", flush=True)
         skipped.append((config.repo_path.name, reason))
+        _record_cost(config, record, "skipped", started, skip_reason=reason)
         return 0
 
     graph = None
@@ -575,11 +605,21 @@ async def run(
     # reliable stage; inside the transaction a rate limit on an optional advisory
     # check would discard a generation that completed perfectly. An interrupted
     # verification should lose the verification, not the wiki.
+    record.pages_generated = len(report.generated)
+    record.pages_cached = len(report.cached)
+    record.pages_failed = len(report.failed)
+    record.generation = costs.Stage(
+        cost_usd=report.total_cost_usd,
+        cost_reported=report.cost_reported,
+        calls=report.calls,
+        usage=report.usage,
+    )
+
     exit_code = 1 if report.failed else 0
     if config.verify:
         try:
             verdict = await _verify_phase(
-                config, scan, results, spend, report.total_cost_usd
+                config, scan, results, spend, report.total_cost_usd, record
             )
             exit_code = max(exit_code, verdict)
         except Exception as exc:  # noqa: BLE001 - advisory step must never be fatal
@@ -590,12 +630,41 @@ async def run(
         # factual error — the exact failure this feature exists to prevent.
         verify_mod.clear_artifacts(config.output_path)
 
+    _record_cost(
+        config, record,
+        "failed" if report.failed else ("cached" if not report.generated else "generated"),
+        started,
+    )
     return exit_code
+
+
+def _record_cost(
+    config: WikiConfig, record: costs.RunRecord, status: str, started: float,
+    skip_reason: str = "",
+) -> None:
+    """Write the run's ledger entry. A failure here is reported, never fatal."""
+    record.status = status
+    record.skip_reason = skip_reason
+    record.duration_s = time.monotonic() - started
+    record.finished_at = costs._now()
+    # The ledger belongs to the volume, not to one repository's wiki. With an
+    # explicit --output that is the root the user named, so every repository's
+    # records sit together and aggregate with one glob. Without it the wiki
+    # lives inside the repository, and so does its ledger — writing anywhere
+    # else would put accounting into a directory the user never nominated.
+    root = Path(config.extra.get("output_root") or config.output_path)
+    try:
+        target = costs.write(record, root)
+    except costs.CostWriteError as exc:
+        print(f"  ! Could not write the cost record: {exc}", file=sys.stderr)
+        return
+    if config.verbose:
+        print(f"  Cost record: {target}", flush=True)
 
 
 async def _verify_phase(
     config: WikiConfig, scan, results: list[PageResult], spend: dict,
-    generation_cost: float = 0.0,
+    generation_cost: float = 0.0, record: costs.RunRecord | None = None,
 ) -> int:
     """Check the wiki's claims against the code. Returns the exit code contribution."""
     wanted = (
@@ -637,6 +706,13 @@ async def _verify_phase(
     runner = ClaudeRunner(config)
     verdict = await verify_mod.run_verification(config, scan, runner, pages)
     spend["verify"] += verdict.cost_usd
+    if record is not None:
+        record.verification = costs.Stage(
+            cost_usd=verdict.cost_usd,
+            cost_reported=verdict.cost_reported,
+            calls=verdict.calls,
+            usage=verdict.usage,
+        )
 
     t = translator(config.language)
     report_path = verify_mod.write_report(config, verdict, t)
@@ -699,6 +775,15 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
+
+    if args.costs_report:
+        root = Path(config.extra.get("output_root") or config.output_path)
+        summary = costs.summarize(root)
+        if not summary["runs"]:
+            print(f"No cost records under {root / costs.COSTS_DIR}", file=sys.stderr)
+            return 1
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+        return 0
 
     try:
         # Before the CLI check, because a missing region is a configuration

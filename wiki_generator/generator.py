@@ -6,11 +6,11 @@ import asyncio
 import json
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import STRUCTURE_VERSION, __version__
-from .claude_client import ClaudeError, ClaudeRunner
+from .claude_client import ClaudeError, ClaudeRunner, TokenUsage
 from .config import WikiConfig
 from .models import PageResult, PageSpec, RepoScan
 from .i18n import translator
@@ -33,6 +33,11 @@ class GenerationReport:
     results: list[PageResult]
     total_cost_usd: float
     elapsed_s: float
+    # Carried so the run can be priced afterwards on a backend that reports no
+    # cost of its own.
+    usage: TokenUsage = field(default_factory=TokenUsage)
+    calls: int = 0
+    cost_reported: bool = True
 
     @property
     def generated(self) -> list[PageResult]:
@@ -145,6 +150,9 @@ class WikiGenerator:
             results=list(results),
             total_cost_usd=runner.total_cost_usd,
             elapsed_s=time.monotonic() - started,
+            usage=runner.usage,
+            calls=runner.total_calls,
+            cost_reported=runner.cost_is_reported,
         )
 
     # ------------------------------------------------------------------

@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import STRUCTURE_VERSION
-from .claude_client import CallOptions, ClaudeError, ClaudeRunner
+from .claude_client import CallOptions, ClaudeError, ClaudeRunner, TokenUsage
 from .config import WikiConfig
 from .models import RepoScan
 from .utils import sha1_text
@@ -192,6 +192,8 @@ class VerifyReport:
     claims_unanswered: int = 0
     evidence_rejected: int = 0
     cost_usd: float = 0.0
+    usage: TokenUsage = field(default_factory=TokenUsage)
+    calls: int = 0
     partial: bool = False
     # A backend that does not price its calls cannot be held to a dollar
     # ceiling. Recorded so the report never prints $0.00 as if it were a fact.
@@ -571,6 +573,8 @@ async def run_verification(
 
     report.stamp = sha1_text("|".join(sorted(fingerprints)))[:12]
     report.cost_usd = runner.total_cost_usd - cost_at_start
+    report.usage = runner.usage
+    report.calls = runner.total_calls
     # Deterministic order, so an unchanged wiki produces an unchanged report.
     report.findings.sort(key=lambda f: (f.page, f.evidence_file, f.evidence_line or 0,
                                         f.claim))

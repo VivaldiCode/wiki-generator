@@ -11,7 +11,7 @@ import asyncio
 import json
 import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import providers
 from .config import WikiConfig
@@ -39,12 +39,52 @@ class CallOptions:
 
 
 @dataclass
+class TokenUsage:
+    """What the call consumed, in the unit every backend agrees on.
+
+    Cost is optional — Bedrock bills the account and may report nothing — but
+    tokens always come back. Recording them is what lets a run be priced later
+    from the provider's own rate card.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+
+    def __iadd__(self, other: "TokenUsage") -> "TokenUsage":
+        self.input_tokens += other.input_tokens
+        self.output_tokens += other.output_tokens
+        self.cache_read_input_tokens += other.cache_read_input_tokens
+        self.cache_creation_input_tokens += other.cache_creation_input_tokens
+        return self
+
+    def to_dict(self) -> dict:
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_input_tokens": self.cache_read_input_tokens,
+            "cache_creation_input_tokens": self.cache_creation_input_tokens,
+        }
+
+    @property
+    def total(self) -> int:
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_input_tokens
+            + self.cache_creation_input_tokens
+        )
+
+
+@dataclass
 class ClaudeResponse:
     text: str
     cost_usd: float = 0.0
     duration_ms: int = 0
     num_turns: int = 0
     session_id: str = ""
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
 
 def ensure_cli_available(config: WikiConfig) -> str:
@@ -70,6 +110,7 @@ class ClaudeRunner:
         # back with a cost is what tells a zero total apart from a silent one —
         # and a silent one turns every dollar ceiling into no ceiling at all.
         self.calls_with_cost = 0
+        self.usage = TokenUsage()
 
     # ------------------------------------------------------------------
     def _build_argv(self, system_prompt: str, options: CallOptions) -> list[str]:
@@ -188,6 +229,7 @@ class ClaudeRunner:
         self.total_calls += 1
         if response.cost_usd > 0:
             self.calls_with_cost += 1
+        self.usage += response.usage
         return response
 
     @property
@@ -322,12 +364,27 @@ def _parse_json_output(raw: str) -> ClaudeResponse:
     if not isinstance(text, str) or not text.strip():
         raise ClaudeError("Response has no usable 'result' field.")
 
+    raw_usage = payload.get("usage")
+    raw_usage = raw_usage if isinstance(raw_usage, dict) else {}
+
+    def _count(name: str) -> int:
+        try:
+            return int(raw_usage.get(name) or 0)
+        except (TypeError, ValueError):
+            return 0
+
     return ClaudeResponse(
         text=text,
         cost_usd=float(payload.get("total_cost_usd") or 0.0),
         duration_ms=int(payload.get("duration_ms") or 0),
         num_turns=int(payload.get("num_turns") or 0),
         session_id=str(payload.get("session_id") or ""),
+        usage=TokenUsage(
+            input_tokens=_count("input_tokens"),
+            output_tokens=_count("output_tokens"),
+            cache_read_input_tokens=_count("cache_read_input_tokens"),
+            cache_creation_input_tokens=_count("cache_creation_input_tokens"),
+        ),
     )
 
 

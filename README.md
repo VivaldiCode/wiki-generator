@@ -22,6 +22,7 @@ wiki-generator --source ~/code/my-project
 - [Built-in verification](#built-in-verification)
 - [Semantic verification (`--verify`)](#semantic-verification---verify)
 - [Running on AWS with Bedrock](#running-on-aws-with-bedrock)
+- [Cost tracking](#cost-tracking)
 - [Choosing a model](#choosing-a-model)
 - [Options reference](#options-reference)
 - [How it works](#how-it-works)
@@ -601,9 +602,10 @@ generator treats `SIGTERM` exactly like Ctrl-C: stop the model calls, roll the
 wiki back to its previous state, exit. Too short a timeout turns a stopped task
 into a half-written wiki.
 
-Keep the output volume between runs. The incremental cache and the rollback
-journal live beside the wiki, so a second run regenerates only what changed —
-throw the volume away and every run pays for the whole wiki again.
+Keep the output volume between runs. The incremental cache, the rollback journal
+and the [cost ledger](#cost-tracking) all live beside the wiki, so a second run
+regenerates only what changed — throw the volume away and every run pays for the
+whole wiki again, with no record that it ever ran.
 
 ### Model IDs
 
@@ -619,6 +621,80 @@ Which Claude models your account can invoke, and whether they need a cross-regio
 inference profile, is an AWS-side question — check **Bedrock → Model access** in
 the region you are running in. A model you have not been granted returns
 `AccessDeniedException`, which the generator reports verbatim and does not retry.
+
+---
+
+## Cost tracking
+
+Every run writes what it consumed to the output volume, beside the wikis:
+
+```
+<output>/.wiki-costs/<repo>/2026-08-16T104100Z-72059.json
+```
+
+On a laptop the cost line in the terminal is enough. On ECS the process exits,
+the logs roll over, and the only thing that outlives the task is the volume — so
+the ledger lives there.
+
+```json
+{
+  "repo": "api-gateway",
+  "status": "generated",
+  "provider": "bedrock",
+  "model": "haiku",
+  "aws_region": "us-east-1",
+  "duration_s": 412.7,
+  "pages": { "generated": 34, "cached": 0, "failed": 0 },
+  "generation": {
+    "cost_usd": null,
+    "cost_reported": false,
+    "calls": 34,
+    "tokens": {
+      "input_tokens": 25,
+      "output_tokens": 41266,
+      "cache_read_input_tokens": 927716,
+      "cache_creation_input_tokens": 87912
+    }
+  },
+  "verification": null,
+  "total_cost_usd": null,
+  "total_tokens": { "...": "..." }
+}
+```
+
+**Tokens are recorded even when cost is not**, and that is the point on Bedrock:
+the account is billed directly and the CLI often reports nothing. A record with
+tokens can be priced afterwards from the AWS rate card; a `0.0` that actually
+means "unknown" can only mislead — so an unpriced stage writes `null` with
+`cost_reported: false`, and a total that mixes priced and unpriced stages is
+`null` rather than a partial sum.
+
+Every repository of a run gets its own record, including the ones that were
+skipped — a `status: "skipped"` entry with its `skip_reason` answers "why did
+this repo cost nothing" months later.
+
+### Reading it back
+
+```bash
+wiki-generator --output /wikis --costs-report
+```
+
+```json
+{
+  "runs": 42,
+  "repositories": {
+    "api-gateway": { "runs": 6, "cost_usd": 3.71, "unpriced_runs": 0, "tokens": { "...": "..." } }
+  },
+  "total_cost_usd": 12.84,
+  "unpriced_runs": 0,
+  "total_tokens": { "...": "..." }
+}
+```
+
+Records are **immutable, one file per run** — never appended to. Two tasks
+writing the same volume at the same time is the normal case when repositories
+are fanned out, and an append-and-rewrite ledger loses records to that race. A
+directory of small files does not, and it aggregates with a glob.
 
 ---
 
@@ -732,6 +808,12 @@ drift as code is edited and no model gets them reliably right.
 |---|---|---|
 | `--bedrock` | off | Run the model on Amazon Bedrock instead of the subscription |
 | `--aws-region` | `AWS_REGION` | Region for Bedrock; required with `--bedrock` |
+
+### Cost tracking
+
+| Flag | Description |
+|---|---|
+| `--costs-report` | Print the aggregated ledger for `--output` and exit |
 
 ### Verification
 

@@ -93,11 +93,16 @@ def has_credentials() -> bool:
     if any(os.environ.get(name) for name in CREDENTIAL_ENV):
         return True
     # The shared credentials file is the last thing the SDK tries before the
-    # instance metadata service.
+    # instance metadata service. An empty file counts as absent: `aws configure`
+    # creates one before anything is written to it, and treating it as proof of
+    # credentials silences the warning on exactly the machine that needs it.
     path = Path(
         os.environ.get("AWS_SHARED_CREDENTIALS_FILE", "~/.aws/credentials")
     ).expanduser()
-    return path.is_file()
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def preflight(provider: str, region: str | None, verbose: bool = False) -> list[str]:
