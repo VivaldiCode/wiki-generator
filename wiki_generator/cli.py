@@ -999,7 +999,10 @@ def main(argv: list[str] | None = None) -> int:
             build_parser().print_help()
             return 0
         try:
-            raw = wizard.run()
+            # A profile saved on an earlier run is offered before the questions
+            # are asked again — "save this to reuse later" has to mean it.
+            saved = wizard.find_profiles()
+            raw = (wizard.offer_saved(saved) if saved else None) or wizard.run()
         except wizard.Cancelled:
             print("\nStopped.", file=sys.stderr)
             return 130

@@ -21,6 +21,11 @@ from . import clients, ollama
 from .scanner import count_repo_files, find_repositories
 
 PROFILE_SUFFIX = ".wiki-profile.json"
+# Saved answers go somewhere findable from any directory. A profile written to
+# whatever directory you happened to be in is a profile you will not find again,
+# which makes "save this to reuse later" a promise the tool does not keep.
+PROFILE_DIR = Path.home() / ".config" / "wiki-generator"
+DEFAULT_PROFILE = PROFILE_DIR / "profile.json"
 
 
 class Cancelled(Exception):
@@ -158,9 +163,14 @@ def run() -> list[str]:
     # --- keep it -----------------------------------------------------------
     print()
     if _ask_yes("Save these answers to reuse later", default=True):
-        target = Path(_ask("Profile file", str(Path.cwd() / f"wiki{PROFILE_SUFFIX}")))
-        save_profile(target, argv)
-        print(f"    Saved. Reuse with: wiki-generator --profile {target}")
+        target = Path(_ask("Profile file", str(DEFAULT_PROFILE)))
+        try:
+            written = save_profile(target, argv)
+        except OSError as exc:
+            print(f"    Could not save: {exc}")
+        else:
+            print(f"    Saved to {written}")
+            print("    The next run with no arguments will offer to reuse it.")
 
     print("\nStarting.\n")
     return argv
@@ -221,6 +231,60 @@ def load_profile(path: Path) -> list[str]:
     if not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
         raise ValueError(f"{path} does not hold a saved profile.")
     return argv
+
+
+def find_profiles() -> list[Path]:
+    """Saved profiles, nearest first: this directory, then the user's own."""
+    found = sorted(Path.cwd().glob(f"*{PROFILE_SUFFIX}"))
+    if PROFILE_DIR.is_dir():
+        found += sorted(p for p in PROFILE_DIR.glob("*.json") if p not in found)
+    return found
+
+
+def describe(argv: list[str]) -> str:
+    """A one-line account of what a saved profile will do."""
+    pairs = dict(zip(argv, argv[1:]))
+    parts = []
+    for flag in ("--repo", "--source"):
+        if flag in pairs:
+            parts.append(f"{flag[2:]} {pairs[flag]}")
+    if "--output" in pairs:
+        parts.append(f"-> {pairs['--output']}")
+    if "--multiclient" in argv:
+        tiers = [f"{t}:{pairs.get(f'--client-{t}', '?')}"
+                 for t in ("small", "medium", "large")]
+        parts.append("multiclient " + " ".join(tiers))
+    elif "--client" in pairs:
+        parts.append(f"{pairs['--client']}/{pairs.get('--model', 'default')}")
+    if "--verify" in argv:
+        parts.append("--verify")
+    return "  ".join(parts) or " ".join(argv[:6])
+
+
+def offer_saved(profiles: list[Path]) -> list[str] | None:
+    """Ask whether to reuse a saved run. Returns its argv, or None to start fresh."""
+    print("Saved runs found:\n")
+    for index, path in enumerate(profiles, start=1):
+        try:
+            argv = load_profile(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            print(f"  {index}. {path}  (unreadable — will be ignored)")
+            continue
+        print(f"  {index}. {path.name}")
+        print(f"     {describe(argv)}")
+    print(f"  {len(profiles) + 1}. set up a new run\n")
+
+    while True:
+        answer = _ask("Choose", "1")
+        if answer.isdigit() and 1 <= int(answer) <= len(profiles):
+            try:
+                return load_profile(profiles[int(answer) - 1])
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                print(f"    Could not read it: {exc}")
+                return None
+        if answer.isdigit() and int(answer) == len(profiles) + 1:
+            return None
+        print(f"    A number from 1 to {len(profiles) + 1}.")
 
 
 def should_offer() -> bool:

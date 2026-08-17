@@ -54,8 +54,24 @@ Clients on this machine:
 ```
 
 Piped or scripted, it prints `--help` instead — the wizard only appears when
-there is someone there to answer. A saved profile replays with `--profile`, and
-flags given alongside it win, so a saved run can be adjusted without editing it.
+there is someone there to answer.
+
+**Saved answers are offered back on the next run.** Profiles live in
+`~/.config/wiki-generator/`, so they are found from any directory, and a no-argument
+run lists what it found before asking anything:
+
+```
+Saved runs found:
+
+  1. profile.json
+     source /Users/me/code  -> /Users/me/wikis  multiclient small:opencode medium:claude large:grok
+  2. set up a new run
+
+  Choose [1]:
+```
+
+A profile also replays directly with `--profile PATH`, and flags given alongside
+it win, so a saved run can be adjusted without editing the file.
 
 ---
 
