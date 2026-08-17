@@ -395,6 +395,7 @@ async def run(
         repo_path=str(config.repo_path),
         wiki_path=str(config.output_path),
         status="failed",  # replaced on every path that completes
+        client=config.client,
         provider=config.provider,
         model=config.model,
         aws_region=(providers.resolved_region(config.aws_region)

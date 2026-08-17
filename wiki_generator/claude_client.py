@@ -88,6 +88,8 @@ class ClaudeResponse:
     num_turns: int = 0
     session_id: str = ""
     usage: TokenUsage = field(default_factory=TokenUsage)
+    # Whether the CLI carried a cost field at all, as opposed to a zero.
+    cost_reported: bool = False
 
 
 INSTALL_HINT = {
@@ -115,9 +117,11 @@ class ClaudeRunner:
         self._semaphore = asyncio.Semaphore(max(1, config.concurrency))
         self.total_cost_usd = 0.0
         self.total_calls = 0
-        # Not every backend prices the call for us. Counting the calls that came
-        # back with a cost is what tells a zero total apart from a silent one —
-        # and a silent one turns every dollar ceiling into no ceiling at all.
+        # Not every backend prices the call for us, and a silent one turns every
+        # dollar ceiling into no ceiling. What settles it is whether the field
+        # was *present*, not whether it was positive: a local model reports a
+        # real, measured zero, and calling that "unknown" is as wrong as calling
+        # an unknown "free".
         self.calls_with_cost = 0
         self.usage = TokenUsage()
 
@@ -230,7 +234,7 @@ class ClaudeRunner:
         response = _parse_json_output(stdout_text, self.client)
         self.total_cost_usd += response.cost_usd
         self.total_calls += 1
-        if response.cost_usd > 0:
+        if response.cost_reported:
             self.calls_with_cost += 1
         self.usage += response.usage
         return response
@@ -412,6 +416,7 @@ def _response_from(fields: dict) -> ClaudeResponse:
     return ClaudeResponse(
         text=text,
         cost_usd=float(fields.get("cost_usd") or 0.0),
+        cost_reported=fields.get("cost_usd") is not None,
         duration_ms=int(fields.get("duration_ms") or 0),
         num_turns=int(fields.get("num_turns") or 0),
         session_id=str(fields.get("session_id") or ""),

@@ -546,7 +546,7 @@ wiki-generator --repo ~/code/api --client grok
 |---|---|---|---|---|
 | `claude` *(default)* | `claude` | `haiku` | Claude Code subscription, or `--bedrock` | yes |
 | `grok` | `grok` | `grok-4.6` | `grok login`, or `XAI_API_KEY` | yes |
-| `opencode` | `opencode` | `anthropic/claude-haiku-4-5` | `opencode auth login` | **no** |
+| `opencode` | `opencode` | `anthropic/claude-haiku-4-5` | `opencode auth login` | yes |
 
 Model aliases do not travel between clients — `haiku` means nothing to Grok — so
 each client names its own default and `--model` overrides it.
@@ -588,6 +588,25 @@ A model's account of its own tools is *not* evidence: asked what it had, this
 CLI confidently reported "5 native + 525 via MCP (333 pfSense, 192 Portainer)"
 while `grok mcp list` reported none configured. Only behaviour counts — ask it
 to do the thing and see whether it can.
+
+### Local models
+
+`opencode` reaches a local Ollama with no account and no bill:
+
+```bash
+wiki-generator --repo ~/code/api --client opencode --model ollama/qwen2.5:latest
+```
+
+The generator runs with the repository as its working directory, and writing an
+`opencode.json` into someone's repository to declare a provider is not
+acceptable — so an `ollama/` model prefix makes the adapter declare the local
+provider in the config it already imposes. Nothing is written to the repository.
+
+Expect it to work and to be weak. On a 4-file fixture: 19 pages, no failures,
+zero cost, 4m39 — against 18 seconds for `haiku`. The quality gap is not
+verbosity but **verifiability**: the local model produced **no `file:line`
+citations at all**, where `haiku` produced 56. A wiki with no citations cannot
+be checked against the code, which is most of the point.
 
 ### When a client cannot be restricted
 

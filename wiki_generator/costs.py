@@ -59,6 +59,7 @@ class RunRecord:
     repo_path: str
     wiki_path: str
     status: str               # generated | cached | skipped | failed
+    client: str               # which agentic CLI ran the prompts
     provider: str
     model: str
     aws_region: str | None = None
@@ -87,6 +88,7 @@ class RunRecord:
             "wiki_path": self.wiki_path,
             "status": self.status,
             "skip_reason": self.skip_reason or None,
+            "client": self.client,
             "provider": self.provider,
             "model": self.model,
             "aws_region": self.aws_region,
