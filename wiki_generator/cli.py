@@ -437,7 +437,12 @@ async def run_multiclient(config: WikiConfig, args) -> int:
         large_min_files=args.large_min_files,
         small=args.client_small, medium=args.client_medium, large=args.client_large,
     )
-    output_root = Path(config.extra.get("output_root") or config.output_path)
+    # None, not the default output path: without an explicit --output each wiki
+    # lives at `<repo>/wiki`, and treating the default as a root looks for every
+    # wiki in a directory that was never used. That misses existing wikis
+    # entirely and reports them as untouched — a full, paid regeneration.
+    explicit = config.extra.get("output_root")
+    output_root = Path(explicit) if explicit else None
     repos = find_repositories(config.repo_path) or [config.repo_path]
 
     print(f"Triaging {len(repos)} repositories (no model calls)...", flush=True)

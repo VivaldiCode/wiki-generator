@@ -581,6 +581,16 @@ whole tree. Failures are found by reading the index for whatever the client
 called its error, so `claude exited with code 1`, `Not signed in` and
 `token refresh failed` all count.
 
+**Wikis generated before this version are recognised, not redone.** Their
+manifests predate the provenance field, and — more to the point — a page's
+fingerprint hashes the prompt that produced it, so any wiki written before the
+prompts last changed can never match today's, whatever client or language it is
+checked against. Comparing them is not conservative, it is meaningless. An older
+wiki is therefore judged on what can still be judged — are all the pages there,
+did anything fail — and the model and language it was written with are read off
+its own index for the record. Checked against a real tree of seven wikis and 258
+pages: six recognised as done, one correctly flagged for two missing pages.
+
 `--triage-only` does this and stops. No model is called either way.
 
 ### Routing is by size

@@ -28,6 +28,7 @@ from . import STRUCTURE_VERSION, __version__
 from .cartography import build_graph, graph_context
 from .config import WikiConfig
 from .generator import MANIFEST_NAME, Manifest, _fingerprint
+from .i18n import STRINGS, translator
 from .journal import STATE_FILE as RUN_MARKER, iter_pages
 from .planner import build_plan
 from .scanner import EmptyRepositoryError, count_repo_files, scan_repo, substance
@@ -131,6 +132,21 @@ def _triage_one(
     # survive a change of routing, or every rebalance re-bills the whole tree.
     manifest = Manifest(wiki / MANIFEST_NAME)
     wrote_client, wrote_model = manifest.provenance()
+    # A manifest with no provenance was written before this version of the tool.
+    # Its fingerprints cannot be compared with today's: the prompt text is hashed
+    # into them and the prompts have changed since, so *every* page of *every*
+    # older wiki would read as stale no matter what client or language it is
+    # checked against. Comparing them is not conservative, it is meaningless —
+    # and acting on it means regenerating hundreds of pages that are fine.
+    #
+    # So an older wiki is judged on what can still be judged: are all the pages
+    # there, and did anything fail. What it was written with is read off the
+    # index for the record, not to compare against.
+    legacy = not wrote_client and not wrote_model
+    wrote_language = ""
+    if legacy:
+        wrote_model, wrote_language = provenance_from_index(wiki)
+        wrote_client = "claude"  # the only client that existed then
 
     # Planning needs a scan, which is the expensive part — so it happens only
     # for repositories that have a wiki worth comparing against.
@@ -138,6 +154,7 @@ def _triage_one(
         config, repo_path=repo, output_path=wiki, project_name=None,
         client=wrote_client or client,
         model=wrote_model or config.model,
+        language=wrote_language or config.language,
     )
     try:
         scan = scan_repo(scoped)
@@ -176,6 +193,8 @@ def _triage_one(
         if not (wiki / spec.path).is_file():
             continue
         present += 1
+        if legacy:
+            continue
         if manifest.get(spec.key) != _fingerprint(spec, scan, scoped):
             stale += 1
 
@@ -195,10 +214,44 @@ def _triage_one(
     else:
         base.state = DONE
         written_by = f"{wrote_client}/{wrote_model}" if wrote_client else "an earlier run"
-        base.reason = f"all {len(specs)} pages present and current, by {written_by}"
+        base.reason = (
+            f"all {len(specs)} pages present, written by {written_by} before this "
+            "version — not re-checked against today's prompts"
+            if legacy else
+            f"all {len(specs)} pages present and current, by {written_by}"
+        )
         # Report who owns it, not who would be assigned: nothing is going to run.
         base.client = wrote_client or client
     return base
+
+
+def provenance_from_index(wiki: Path) -> tuple[str, str]:
+    """The model and language a wiki was written with, read from its index.
+
+    Both are in the fingerprint, so recovering only the model would still leave
+    a Portuguese wiki looking stale under the default English. The row label is
+    itself translated, which is what makes the language recoverable: whichever
+    language's label matches is the language the wiki was written in.
+    """
+    index = wiki / "README.md"
+    if not index.is_file():
+        return "", ""
+    try:
+        text = index.read_text(encoding="utf-8")
+    except OSError:
+        return "", ""
+    labels = {translator(lang)("index.model"): lang for lang in STRINGS}
+    for line in text.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) >= 2 and cells[0] in labels:
+            return cells[1].strip("`").strip(), labels[cells[0]]
+    return "", ""
+
+
+def model_in_index(wiki: Path) -> str:
+    return provenance_from_index(wiki)[0]
 
 
 def _failures_in(wiki: Path) -> list[str]:
