@@ -106,6 +106,14 @@ it win, so a saved run can be adjusted without editing the file.
 Requires **Python 3.10+** and at least one [client CLI](#choosing-a-client)
 installed and authenticated.
 
+> **The npm-installed clients need Node 22 or newer.** A distribution's default
+> is often much older — Ubuntu 22.04 ships Node 12 — and the install fails with a
+> `SyntaxError` from inside the package's own installer rather than a clear
+> version message. Check with `node --version` first, and if it is too old,
+> either install a current Node or skip the whole question by running
+> [in Docker](#running-the-whole-thing-in-a-container), where the image already
+> carries Node 22 and all three clients.
+
 **Nothing needs installing.** There are no dependencies outside the standard
 library, so a checkout runs as it is — which is what the container image does:
 
