@@ -22,7 +22,7 @@ from .citations import check as check_citations, format_report
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
-from . import board as board_mod, clients, costs, providers, state as state_mod, wizard
+from . import board as board_mod, clients, costs, ollama, providers, state as state_mod, wizard
 from .i18n import translator
 from .journal import RunJournal
 from . import verify as verify_mod
@@ -1040,6 +1040,18 @@ def main(argv: list[str] | None = None) -> int:
               "that, ideally with the repository mounted read-only.",
               file=sys.stderr)
         return 2
+
+    if ollama.is_local(config.model):
+        # A missing local model is an opaque provider error minutes into the
+        # run; one without tool support is worse, because the run succeeds and
+        # the wiki has no citations in it.
+        try:
+            config.model = providers.ollama_preflight(
+                config.model, interactive=wizard.should_offer()
+            )
+        except providers.ProviderError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
 
     for warning in client.warnings():
         print(f"  ! {warning}", file=sys.stderr)

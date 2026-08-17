@@ -714,6 +714,30 @@ verbosity but **verifiability**: the local model produced **no `file:line`
 citations at all**, where `haiku` produced 56. A wiki with no citations cannot
 be checked against the code, which is most of the point.
 
+#### The model is checked before the run, not during it
+
+Two failures are caught up front, because Ollama declares both facts:
+
+```
+Error: `qwen3:latest` is not installed. Install it with `ollama pull qwen3:latest`,
+       or pick one that can: llama3.2:latest, qwen2.5:latest.
+
+Error: `tinyllama:latest` cannot call tools (completion). The generator gives the
+       model tools to read the repository — without them it will write pages
+       about code it never opened. Pick one that can: llama3.2:latest, ...
+```
+
+The second matters more than it looks. A missing model is an opaque provider
+error a few minutes in; a model **without tool calling** fails silently — the run
+completes, every page is written, and the wiki describes a repository the model
+was never able to open.
+
+Interactively it offers the choice rather than the error: pull the one you asked
+for, use one already installed (with its size), or name a different one to pull.
+Nothing is downloaded without being asked for — a pull is gigabytes over your
+connection. Scripted, it stops with the message above instead of quietly
+swapping the model out from under you.
+
 ### When a client cannot be restricted
 
 `opencode` has no tool-allowlist flag at all: permissions live in a config file,

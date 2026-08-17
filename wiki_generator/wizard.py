@@ -17,7 +17,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import clients
+from . import clients, ollama
 from .scanner import count_repo_files, find_repositories
 
 PROFILE_SUFFIX = ".wiki-profile.json"
@@ -136,8 +136,7 @@ def run() -> list[str]:
         client = _ask_choice("Client", usable,
                              "claude" if "claude" in usable else usable[0])
         argv += ["--client", client]
-        model = _ask("Model", clients.get(client).default_model)
-        argv += ["--model", model]
+        argv += ["--model", _ask_model(client)]
 
     if "opencode" in (argv + usable) and not clients.get(
         "opencode"
@@ -165,6 +164,36 @@ def run() -> list[str]:
 
     print("\nStarting.\n")
     return argv
+
+
+def _ask_model(client: str) -> str:
+    """For opencode, offer the local models that can actually do the job."""
+    default = clients.get(client).default_model
+    if client != "opencode" or not ollama.is_running():
+        return _ask("Model", default)
+
+    local = ollama.usable_models()
+    unusable = [m for m in ollama.installed() if not m.usable]
+    if local:
+        print("    Local models that can call tools (needed to read the repo):")
+        for model in local:
+            print(f"      {model.name:<26} {model.size_gb:.1f} GB")
+    if unusable:
+        print("    Installed but unusable here (no tool calling): "
+              + ", ".join(m.name for m in unusable))
+    if not local:
+        print("    None of the installed local models can call tools.")
+
+    # Walk the recommendations in preference order, not the installed list in
+    # alphabetical order — otherwise the ordering of RECOMMENDED means nothing.
+    names = {m.name for m in local}
+    suggestion = next(
+        (name for name in ollama.RECOMMENDED if name in names),
+        local[0].name if local else ollama.RECOMMENDED[0],
+    )
+    answer = _ask("Model (a name not listed will be pulled)",
+                  ollama.PREFIX + suggestion)
+    return answer if "/" in answer else ollama.PREFIX + answer
 
 
 def _install_hint(name: str) -> str:

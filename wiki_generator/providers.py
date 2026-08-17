@@ -143,6 +143,82 @@ def preflight(provider: str, region: str | None, verbose: bool = False) -> list[
     return warnings
 
 
+def ollama_preflight(model: str, interactive: bool) -> str:
+    """Settle the local model before a run starts. Returns the model to use.
+
+    Interactively this offers to pull what is missing or to pick something else;
+    scripted it raises, because a run that silently swaps the model is worse
+    than one that stops. Nothing is downloaded without being asked for: a pull
+    is gigabytes over someone else's connection.
+    """
+    from . import ollama
+
+    state, detail = ollama.check(model)
+    if state == "ok":
+        return model
+    if state == "not_running":
+        raise ProviderError(detail)
+
+    usable = ollama.usable_models()
+    if not interactive:
+        options = ", ".join(m.name for m in usable) or "none installed"
+        # The remedy differs by cause: pulling a model again does not give it
+        # tool support, so only the missing case gets a `pull` suggestion.
+        remedy = (
+            f"Install it with `ollama pull {ollama.model_name(model)}`, or pick"
+            if state == "missing" else "Pick"
+        )
+        raise ProviderError(f"{detail} {remedy} one that can: {options}.")
+    return _choose_local_model(model, detail, usable)
+
+
+def _choose_local_model(model: str, detail: str, usable: list) -> str:
+    from . import ollama
+
+    wanted = ollama.model_name(model)
+    print(f"  ! {detail}")
+    options: list[tuple[str, str]] = []
+    if not any(m.name == wanted for m in usable):
+        options.append((f"pull {wanted}", ollama.PREFIX + wanted))
+    options += [(f"use {m.name} ({m.size_gb:.1f} GB, already here)",
+                 ollama.PREFIX + m.name) for m in usable]
+    options.append(("pull something else", ""))
+
+    for index, (label, _) in enumerate(options, start=1):
+        print(f"      {index}. {label}")
+    while True:
+        try:
+            answer = input("    Choose [1]: ").strip() or "1"
+        except (EOFError, KeyboardInterrupt):
+            raise ProviderError("no model chosen") from None
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            label, chosen = options[int(answer) - 1]
+            break
+        print(f"      A number from 1 to {len(options)}.")
+
+    if not chosen:  # pull something else
+        try:
+            name = input("    Model name (e.g. qwen2.5-coder:latest): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise ProviderError("no model chosen") from None
+        if not name:
+            raise ProviderError("no model chosen")
+        chosen = ollama.PREFIX + name
+
+    name = ollama.model_name(chosen)
+    if not any(m.name == name for m in usable):
+        print(f"    Pulling {name} — this downloads several gigabytes.")
+        try:
+            ollama.pull(name, on_progress=lambda line: print(f"      {line}"))
+        except ollama.OllamaError as exc:
+            raise ProviderError(str(exc)) from None
+        state, detail = ollama.check(chosen)
+        if state != "ok":
+            raise ProviderError(detail)
+    print(f"    Using {chosen}.")
+    return chosen
+
+
 def _identity_note() -> list[str]:
     """Which AWS identity is in play, when the CLI is available to say so."""
     if not shutil.which("aws"):
