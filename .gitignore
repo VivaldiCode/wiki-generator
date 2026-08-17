@@ -30,3 +30,8 @@ wg-logs/
 wiki-control.json
 *.wiki-profile.json
 wiki-logs/
+
+# A stray `npm install` in the checkout — the client CLIs are installed
+# globally, never as a dependency of this project.
+node_modules/
+package-lock.json

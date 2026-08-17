@@ -763,6 +763,13 @@ that can do four things can drive it:
 wiki-generator --repo ~/code/api --client grok
 ```
 
+> Install the client CLIs **globally** (`npm i -g @anthropic-ai/claude-code`) and
+> run them as your normal user. `npm install claude` fetches an unrelated
+> abandoned package, and a non-global install leaves no command on PATH. Never
+> run the generator with `sudo`: it drives the client with permission prompts
+> bypassed, which Claude Code refuses to do as root — the same reason the
+> container image runs as an ordinary user.
+
 | Client | Binary | Default model | Auth | Verified |
 |---|---|---|---|---|
 | `claude` *(default)* | `claude` | `haiku` | Claude Code subscription, or `--bedrock` | yes |
