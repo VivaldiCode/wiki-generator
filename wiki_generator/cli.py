@@ -7,6 +7,7 @@ import asyncio
 import json
 import re
 import signal
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -22,7 +23,8 @@ from .citations import check as check_citations, format_report
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
-from . import board as board_mod, clients, costs, ollama, providers, state as state_mod, wizard
+from . import (board as board_mod, clients, costs, dockerrun, ollama,
+               providers, state as state_mod, wizard)
 from .i18n import translator
 from .journal import RunJournal
 from . import verify as verify_mod
@@ -138,6 +140,16 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Run a client that cannot be restricted to read-only "
                             "tools from the command line. The run may modify the "
                             "repository.")
+
+    container = parser.add_argument_group("container")
+    container.add_argument("--docker", action="store_true",
+                           help="Run everything inside the container image, which "
+                                "already has every client CLI installed. Builds "
+                                "the image first if it is not present.")
+    container.add_argument("--docker-image", default=dockerrun.IMAGE, metavar="TAG",
+                           help=f"Image to use (default: {dockerrun.IMAGE}).")
+    container.add_argument("--docker-rebuild", action="store_true",
+                           help="Rebuild the image even if it is already there.")
 
     behaviour_profile = parser.add_argument_group("saved runs")
     behaviour_profile.add_argument("--profile", default=None, metavar="PATH",
@@ -1005,6 +1017,53 @@ async def _verify_phase(
     return 0
 
 
+def _run_in_docker(args, raw: list[str]) -> int:
+    """Hand the whole run to the container image and wait for it."""
+    ok, detail = dockerrun.available()
+    if not ok:
+        print(f"Error: {detail}", file=sys.stderr)
+        return 2
+
+    if args.docker_rebuild or not dockerrun.image_exists(args.docker_image):
+        why = "rebuilding" if args.docker_rebuild else "not present, building"
+        print(f"Image {args.docker_image} {why}. This takes a few minutes.",
+              flush=True)
+        try:
+            dockerrun.build(args.docker_image,
+                            on_line=lambda line: print(f"  {line}", flush=True))
+        except dockerrun.DockerError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+
+    # The container gets everything except the flags that put it there.
+    inner = [a for a in raw if a not in {"--docker", "--docker-rebuild"}]
+    for flag in ("--docker-image",):
+        if flag in inner:
+            index = inner.index(flag)
+            del inner[index:index + 2]
+
+    try:
+        plan = dockerrun.plan(inner, tag=args.docker_image,
+                              interactive=sys.stdout.isatty())
+    except dockerrun.DockerError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    for host, inner_path, mode in plan.mounts:
+        print(f"  mount {host} -> {inner_path} ({mode})", flush=True)
+    for missing in plan.missing_credentials:
+        print(f"  ! no credentials to mount for {missing}", file=sys.stderr)
+    print(flush=True)
+
+    try:
+        return subprocess.call(plan.argv)
+    except KeyboardInterrupt:
+        return 130
+    except OSError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
 
@@ -1024,6 +1083,8 @@ def main(argv: list[str] | None = None) -> int:
             return 130
 
     args = build_parser().parse_args(raw)
+    if args.docker:
+        return _run_in_docker(args, raw)
     if args.profile:
         try:
             saved = wizard.load_profile(Path(args.profile))

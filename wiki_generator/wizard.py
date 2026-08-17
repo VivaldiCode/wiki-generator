@@ -90,17 +90,28 @@ def run() -> list[str]:
     print("wiki-generator — interactive setup")
     print("Press Ctrl-C at any point to stop.\n")
 
-    installed = available_clients()
-    usable = [name for name, path in installed.items() if path]
-    print("Clients on this machine:")
-    for name, path in installed.items():
-        mark = "yes" if path else "no "
-        hint = "" if path else f"   ({_install_hint(name)})"
-        print(f"  {mark}  {name:<9} {path or ''}{hint}")
-    if not usable:
-        print("\nNo client CLI is installed, so nothing can be generated yet.")
-        raise Cancelled
-    print()
+    in_docker = _ask_where()
+    if in_docker:
+        # Every client is in the image, so what is installed here stops mattering.
+        installed = {name: "in the image" for name in sorted(clients.CLIENTS)}
+        usable = sorted(clients.CLIENTS)
+        print("Clients (from the container image):")
+        for name in usable:
+            print(f"  yes  {name}")
+        print()
+    else:
+        installed = available_clients()
+        usable = [name for name, path in installed.items() if path]
+        print("Clients on this machine:")
+        for name, path in installed.items():
+            mark = "yes" if path else "no "
+            hint = "" if path else f"   ({_install_hint(name)})"
+            print(f"  {mark}  {name:<9} {path or ''}{hint}")
+        if not usable:
+            print("\nNo client CLI is installed here. Running in Docker would "
+                  "supply all three.")
+            raise Cancelled
+        print()
 
     # --- what to document -------------------------------------------------
     source = _ask_path("Repository, or a folder containing several", str(Path.cwd()))
@@ -121,6 +132,8 @@ def run() -> list[str]:
 
     argv = ["--source" if len(repos) > 1 else "--repo", str(source),
             "--output", str(output)]
+    if in_docker:
+        argv.append("--docker")
 
     # --- who does the work ------------------------------------------------
     multi = len(repos) > 1 and len(usable) > 1 and _ask_yes(
@@ -183,6 +196,27 @@ def run() -> list[str]:
 
     print("\nStarting.\n")
     return argv
+
+
+def _ask_where() -> bool:
+    """Local machine, or the container image. Asked first because it changes
+    which clients are even available."""
+    from . import dockerrun
+
+    ok, detail = dockerrun.available()
+    if not ok:
+        print(f"Docker is not usable here ({detail}); running locally.\n")
+        return False
+
+    have = dockerrun.image_exists()
+    state = ("the image is already built" if have
+             else "the image will be built on first run, which takes a few minutes")
+    print("Where should this run?")
+    print(f"  1. On this machine — uses the client CLIs installed here")
+    print(f"  2. In Docker — every client already installed ({state})")
+    choice = _ask_choice("Choose", ["1", "2"], "1")
+    print()
+    return choice == "2"
 
 
 def _ask_model(client: str) -> str:

@@ -34,7 +34,20 @@ wiki-generator --source ~/code/my-project
 
 ## Interactive setup
 
-Run it with no arguments and it asks, checking what it can instead of asking:
+Run it with no arguments and it asks, checking what it can instead of asking.
+The first question is where the run happens, because it decides everything after
+it:
+
+```
+Where should this run?
+  1. On this machine — uses the client CLIs installed here
+  2. In Docker — every client already installed (the image will be built on first run)
+```
+
+In Docker, what is installed on the host stops mattering — the image carries all
+three clients, and the image is built on first use if it is not there. If Docker
+is not usable, it says why and continues locally rather than asking a question
+with one answer.
 
 ```
 wiki-generator — interactive setup
@@ -690,6 +703,37 @@ The lanes are redrawn in place on a terminal and appended only when something
 changes when the output is a file, because a log that repeats an unchanged
 status every five seconds is unreadable. Each repository's full output goes to
 `wiki-logs/<repo>.log`.
+
+### Running the whole thing in a container
+
+```bash
+wiki-generator --source ~/code --output ~/wikis --multiclient --docker
+```
+
+The image is built from this checkout on first use (`--docker-rebuild` forces
+it). Two things cross the container boundary, and both are handled explicitly
+rather than assumed:
+
+**Paths are translated.** `--repo ~/code/api` becomes `--repo /repos/api` inside,
+with `~/code` mounted **read-only** at `/repos` — the generator only ever reads a
+repository, and the mount makes that a guarantee. `--output` is mandatory here:
+without it the wiki would be written into the read-only mount and lost when the
+container exits, so the run stops and says so instead.
+
+**Credentials are mounted per client**, and only for the client in use — a Grok
+run has no reason to see AWS keys. With `--bedrock` the Claude subscription's
+credentials are deliberately *not* mounted, because Bedrock replaces them. Every
+mount is printed before the container starts:
+
+```
+  mount /Users/me/code -> /repos (ro)
+  mount /Users/me/wikis -> /wikis (rw)
+  mount /Users/me/.grok -> /home/node/.grok (rw)
+```
+
+> On macOS, Claude Code may hold its subscription credentials in the system
+> keychain, which a container cannot read. Bedrock (`--bedrock`) has no such
+> problem, and is the path the container image was built for.
 
 ### The control file
 

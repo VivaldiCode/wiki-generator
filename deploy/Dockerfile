@@ -28,6 +28,33 @@ ARG CLAUDE_CODE_VERSION=2.1.228
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     && npm cache clean --force
 
+# The other two clients, each optional so a claude-only image stays small.
+#
+# opencode ships on npm as `opencode-ai`. Note it is NOT `grok-cli`, which is an
+# unrelated third-party proxy — installing that would put the wrong tool in the
+# image under the right name.
+ARG WITH_OPENCODE=1
+RUN if [ "$WITH_OPENCODE" = "1" ]; then \
+        npm install -g opencode-ai && npm cache clean --force; \
+    fi
+
+# grok has no package: this is the vendor's own documented installer, taken from
+# the README the tool ships with. It is a remote script piped to a shell, which
+# is worth knowing when you build this image — set WITH_GROK=0 to leave it out.
+#
+# HOME is set for the install so it lands in the runtime user's home rather than
+# root's: the container runs as `node`, and an installer that writes to /root
+# produces a binary this image cannot execute.
+ARG WITH_GROK=1
+RUN if [ "$WITH_GROK" = "1" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends curl \
+        && HOME=/home/node curl -fsSL https://x.ai/cli/install.sh | HOME=/home/node bash \
+        && chown -R node:node /home/node \
+        && apt-get purge -y curl && apt-get autoremove -y \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+ENV PATH="/home/node/.grok/bin:${PATH}"
+
 WORKDIR /app
 COPY wiki_generator ./wiki_generator
 COPY README.md LICENSE ./
