@@ -90,6 +90,10 @@ class Client:
     def env(self, config) -> dict[str, str]:
         return {}
 
+    # "object": one JSON envelope on stdout. "events": NDJSON, one event per
+    # line, with the answer assembled from the text events.
+    output_mode: str = "object"
+
     # How the prompt reaches the CLI. "stdin" avoids every length limit;
     # "file" writes a temp file and names it with `prompt_file_flag`; "argv"
     # appends it as a positional argument and is bounded by ARG_MAX.
@@ -118,6 +122,13 @@ class Client:
 
     def error_from(self, payload: dict) -> str | None:
         """The CLI's own description of a failure, if the payload carries one."""
+        return None
+
+    def parse_events(self, events: list[dict]) -> dict:
+        """Same contract as `parse`, for clients that stream NDJSON events."""
+        raise NotImplementedError
+
+    def error_from_events(self, events: list[dict]) -> str | None:
         return None
 
 
@@ -317,14 +328,20 @@ class OpenCodeClient(Client):
     name = "opencode"
     binary = "opencode"
     capabilities = Capabilities(
+        # No `--json-schema`, and no inline subagent definitions, so `--verify`
+        # cannot run here.
         json_schema=False,
         subagents=False,
-        # No allowlist flag exists. Denial is configured, and unconfirmed.
-        tool_restriction=False,
-        cost=False,
+        # Confirmed by controlled experiment rather than by reading a flag:
+        # same model, same prompt, same directory — with the imposed denials the
+        # file was not written, without them it was. Note the model *claimed*
+        # success in both cases, so only the filesystem settles it.
+        tool_restriction=True,
+        cost=True,
         stdin_prompt=False,
-        verified=False,
+        verified=True,
     )
+    output_mode = "events"
     default_model = "anthropic/claude-haiku-4-5"
     read_tools = ()
     subagent_tool = ""
@@ -335,27 +352,45 @@ class OpenCodeClient(Client):
 
     def warnings(self) -> list[str]:
         return [
-            "The 'opencode' client has no tool-allowlist flag: read-only access "
-            "is configured, not enforced by argv, and could not be confirmed "
-            "behaviourally here. Run it against a repository you can afford to "
-            "have modified, or mount the repository read-only.",
-            "`--verify` is unavailable on this client: it has no JSON-schema "
-            "output and no inline subagent definitions.",
+            "`--verify` is unavailable on the 'opencode' client: it has no "
+            "JSON-schema output and no inline subagent definitions.",
         ]
 
-    def config_payload(self) -> dict:
+    # Where a local Ollama listens. Only used when the model is `ollama/...`.
+    OLLAMA_BASE_URL = "http://localhost:11434/v1"
+
+    def config_payload(self, model: str = "") -> dict:
         """The config the adapter imposes, independent of the user's own."""
-        return {"permission": {tool: "deny" for tool in self.write_tools}}
+        payload: dict = {
+            "permission": {tool: "deny" for tool in self.write_tools},
+        }
+        if model.startswith("ollama/"):
+            # The generator runs with the repository as the working directory,
+            # and writing an `opencode.json` into someone's repository to
+            # declare a provider is not acceptable. Declaring it here keeps the
+            # local-model path working without touching the repository at all.
+            payload["provider"] = {
+                "ollama": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "name": "Ollama (local)",
+                    "options": {"baseURL": self.OLLAMA_BASE_URL},
+                    "models": {model.split("/", 1)[1]: {"name": model}},
+                }
+            }
+        return payload
 
     def env(self, config) -> dict[str, str]:
         # Written once per process and pointed at by OPENCODE_CONFIG, so the
-        # denials do not depend on the user's own config file. Confirmed that
-        # the variable is honoured and that the CLI rejects unknown keys.
+        # denials do not depend on the user's own config file. Three things were
+        # confirmed: the variable is honoured, the CLI rejects unknown config
+        # keys, and this file *merges* with the project's own config rather than
+        # replacing it — so a local provider (Ollama, say) defined there keeps
+        # working while the denials still apply.
         global _OPENCODE_CONFIG_PATH
         if _OPENCODE_CONFIG_PATH is None:
             handle, path = tempfile.mkstemp(prefix="wiki-opencode-", suffix=".json")
             with os.fdopen(handle, "w", encoding="utf-8") as out:
-                json.dump(self.config_payload(), out)
+                json.dump(self.config_payload(config.model), out)
             _OPENCODE_CONFIG_PATH = path
         return {"OPENCODE_CONFIG": _OPENCODE_CONFIG_PATH}
 
@@ -371,25 +406,55 @@ class OpenCodeClient(Client):
         ]
         return argv
 
-    def parse(self, payload: dict) -> dict:
-        usage = payload.get("usage")
-        usage = usage if isinstance(usage, dict) else {}
+    def parse_events(self, events: list[dict]) -> dict:
+        """Assemble the answer from the event stream.
+
+        Confirmed shape: `step_start`, then one or more `text` events carrying
+        `part.text`, then `step_finish` with `part.tokens` and `part.cost`.
+        """
+        text = "".join(
+            (event.get("part") or {}).get("text") or ""
+            for event in events if event.get("type") == "text"
+        )
+        cost = 0.0
+        tokens: dict = {}
+        turns = 0
+        for event in events:
+            if event.get("type") != "step_finish":
+                continue
+            turns += 1
+            part = event.get("part") or {}
+            cost += float(part.get("cost") or 0.0)
+            counts = part.get("tokens") or {}
+            cache = counts.get("cache") or {}
+            # opencode's names, mapped onto the generator's.
+            tokens = {
+                "input_tokens": tokens.get("input_tokens", 0) + int(counts.get("input") or 0),
+                "output_tokens": tokens.get("output_tokens", 0) + int(counts.get("output") or 0),
+                "cache_read_input_tokens": tokens.get("cache_read_input_tokens", 0)
+                + int(cache.get("read") or 0),
+                "cache_creation_input_tokens": tokens.get("cache_creation_input_tokens", 0)
+                + int(cache.get("write") or 0),
+            }
+        session = next(
+            (e.get("sessionID") for e in events if e.get("sessionID")), None
+        )
         return {
-            "text": _first(payload, "text", "result", "content", "message"),
-            "cost_usd": _first(payload, "cost", "total_cost_usd", "cost_usd"),
-            "duration_ms": _first(payload, "duration_ms"),
-            "num_turns": _first(payload, "num_turns", "turns"),
-            "session_id": _first(payload, "sessionID", "session_id", "id"),
-            "usage": usage,
+            "text": text or None,
+            "cost_usd": cost,
+            "duration_ms": None,
+            "num_turns": turns,
+            "session_id": session,
+            "usage": tokens,
         }
 
-    def error_from(self, payload: dict) -> str | None:
-        if payload.get("type") == "error" or payload.get("name") in {
-            "UnknownError", "ProviderAuthError",
-        }:
-            data = payload.get("data")
-            message = (data or {}).get("message") if isinstance(data, dict) else None
-            return str(message or payload.get("message") or payload.get("name"))
+    def error_from_events(self, events: list[dict]) -> str | None:
+        for event in events:
+            if event.get("type") not in {"error", "session.error"}:
+                continue
+            part = event.get("part") or event.get("data") or {}
+            message = part.get("message") or part.get("name") or event.get("message")
+            return str(message or "the CLI reported an error")
         return None
 
 

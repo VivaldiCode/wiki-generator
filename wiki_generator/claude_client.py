@@ -186,7 +186,13 @@ class ClaudeRunner:
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,
-                stdin=asyncio.subprocess.PIPE,
+                # Only open a pipe when there is something to write. With
+                # `stdin=PIPE` and no payload, asyncio's `communicate(None)`
+                # leaves the pipe open forever, and a CLI that reads stdin waits
+                # on it for the whole timeout — opencode does, which turned a
+                # 19-second page into a run that never finished.
+                stdin=(asyncio.subprocess.PIPE if stdin_payload is not None
+                       else asyncio.subprocess.DEVNULL),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self.config.repo_path),
@@ -343,11 +349,38 @@ def _diagnose(
     )
 
 
+def _events_from(raw: str) -> list[dict]:
+    """One JSON object per line, skipping anything that is not one."""
+    events = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
 def _parse_json_output(raw: str, client: Client | None = None) -> ClaudeResponse:
     client = client or get_client("claude")
     raw = raw.strip()
     if not raw:
         raise ClaudeError("The CLI returned empty stdout.")
+
+    if client.output_mode == "events":
+        events = _events_from(raw)
+        if not events:
+            raise ClaudeError(f"No JSON events from the CLI: {raw[:500]}")
+        error = client.error_from_events(events)
+        if error:
+            raise ClaudeError(error)
+        fields = client.parse_events(events)
+        return _response_from(fields)
+
     payload = _payload_from(raw)
     if payload is None:
         raise ClaudeError(f"Non-JSON output from the CLI: {raw[:500]}") from None
@@ -356,7 +389,10 @@ def _parse_json_output(raw: str, client: Client | None = None) -> ClaudeResponse
     if error:
         raise ClaudeError(error)
 
-    fields = client.parse(payload)
+    return _response_from(client.parse(payload))
+
+
+def _response_from(fields: dict) -> ClaudeResponse:
     text = fields.get("text")
     # Under --json-schema the CLI returns a JSON *string* today, but a future
     # version returning a parsed object must not hard-fail with a misleading error.

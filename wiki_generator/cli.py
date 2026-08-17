@@ -16,7 +16,7 @@ from .assembler import assemble
 from .cartography import build_graph, graph_context, write_cartography
 from .claude_client import ClaudeError, ClaudeRunner, ensure_cli_available
 from .config import DEFAULT_MODEL, WikiConfig
-from .generator import WikiGenerator
+from .generator import WikiGenerator, provenance_warning
 from .citations import check as check_citations, format_report
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
@@ -489,6 +489,11 @@ async def run(
 
     noun = "page" if len(specs) == 1 else "pages"
     print(f"\nPlan: {len(specs)} model-generated {noun}", flush=True)
+    # Before the first paid call, and before --dry-run returns: this is where
+    # the decision to spend is made.
+    provenance = provenance_warning(config)
+    if provenance:
+        print(f"  ! {provenance}", file=sys.stderr, flush=True)
     if config.dry_run:
         for spec in specs:
             print(f"  - {spec.path:<52} {spec.title}")
