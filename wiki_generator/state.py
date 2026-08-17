@@ -92,14 +92,36 @@ class RepoState:
 
 
 # ----------------------------------------------------------------------
+ERROR = "error"
+
+
 def triage(
     config: WikiConfig, repos: list[Path], routing: Routing,
-    output_root: Path | None = None,
+    output_root: Path | None = None, on_event=None,
 ) -> list[RepoState]:
-    """Classify every repository. Deterministic: no model is called."""
+    """Classify every repository. Deterministic: no model is called.
+
+    `on_event(phase, index, total, name, state)` is called before and after each
+    repository. Over a thousand repositories this is the difference between a
+    long silence and a run you can see the shape of — and each repository costs a
+    full scan, so the silence is minutes, not seconds.
+    """
     states: list[RepoState] = []
-    for repo in repos:
-        states.append(_triage_one(config, repo, routing, output_root))
+    total = len(repos)
+    for index, repo in enumerate(repos, start=1):
+        if on_event:
+            on_event("start", index, total, repo.name, None)
+        try:
+            state = _triage_one(config, repo, routing, output_root)
+        except Exception as exc:  # noqa: BLE001 - one bad repo must not stop 1499
+            state = RepoState(
+                name=repo.name, path=str(repo), wiki_path="", files=0,
+                client=routing.medium, state=ERROR,
+                reason=f"could not be classified: {exc}"[:200],
+            )
+        states.append(state)
+        if on_event:
+            on_event("done", index, total, repo.name, state)
     return states
 
 
@@ -307,7 +329,7 @@ def save(path: Path, states: list[RepoState], routing: Routing, config: WikiConf
 
 
 def totals(states: list[RepoState]) -> dict:
-    counts = {DONE: 0, INCOMPLETE: 0, UNTOUCHED: 0, SKIPPED: 0}
+    counts = {DONE: 0, INCOMPLETE: 0, UNTOUCHED: 0, SKIPPED: 0, ERROR: 0}
     by_client: dict[str, int] = {}
     for state in states:
         counts[state.state] = counts.get(state.state, 0) + 1

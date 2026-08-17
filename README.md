@@ -593,6 +593,26 @@ pages: six recognised as done, one correctly flagged for two missing pages.
 
 `--triage-only` does this and stops. No model is called either way.
 
+Triage costs a full scan per repository, so on a large tree it is minutes of
+work — and silence for minutes is indistinguishable from a hang. It reports as
+it goes, and the heartbeat is the point: a single repository with tens of
+thousands of files takes long enough on its own to look stuck, and only a clock
+that keeps moving tells the two apart.
+
+```
+  [847/1500] payments-service  0s   done:612 untouched:198 incomplete:36
+```
+
+On a terminal that line is rewritten in place and only repositories taking over
+five seconds earn a permanent line. Piped, every repository gets one line, so the
+log holds the whole classification. Measured: 1500 small repositories in 46
+seconds.
+
+Past `--list-limit` (60) the per-repository listing collapses to what needs work,
+capped, with the counts and the control file carrying the rest — a thousand lines
+of `untouched` is not a report. One repository that cannot be classified is
+recorded as `error` and the other 1499 carry on.
+
 ### Routing is by size
 
 | Repository | Default client | Why |

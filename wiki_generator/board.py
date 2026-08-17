@@ -134,3 +134,77 @@ class Board:
             self._stream.write("\n")
             self._stream.flush()
         self._painted = 0
+
+
+class TriageProgress:
+    """Live feedback while a large tree is classified.
+
+    The question this answers is "is it stuck?", so the heartbeat matters more
+    than the tally: one repository with tens of thousands of files takes long
+    enough on its own to look like a hang, and only a clock that keeps moving
+    tells the two apart.
+    """
+
+    def __init__(self, total: int, stream=None, heartbeat: float = 2.0) -> None:
+        self.total = total
+        self._stream = stream or sys.stdout
+        self._live = bool(getattr(self._stream, "isatty", lambda: False)())
+        self._heartbeat = heartbeat
+        self._lock = threading.Lock()
+        self._current = ""
+        self._started = 0.0
+        self._index = 0
+        self._counts: dict[str, int] = {}
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "TriageProgress":
+        if self._live:
+            self._thread = threading.Thread(target=self._beat, daemon=True)
+            self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=1)
+        if self._live:
+            self._stream.write("\r\033[2K")
+            self._stream.flush()
+
+    # ------------------------------------------------------------------
+    def __call__(self, phase: str, index: int, total: int, name: str, state) -> None:
+        if phase == "start":
+            with self._lock:
+                self._current, self._started, self._index = name, time.monotonic(), index
+            if self._live:
+                self._paint()
+            return
+        with self._lock:
+            self._counts[state.state] = self._counts.get(state.state, 0) + 1
+            elapsed = time.monotonic() - self._started
+        if not self._live:
+            # Piped: one line each, so the log holds the whole classification.
+            print(f"  [{index}/{total}] {name} — {state.state} ({elapsed:.1f}s)",
+                  file=self._stream, flush=True)
+        elif elapsed >= 5.0:
+            # On a terminal only the slow ones earn a permanent line.
+            self._stream.write("\r\033[2K")
+            print(f"  [{index}/{total}] {name} — {state.state} ({elapsed:.0f}s)",
+                  file=self._stream, flush=True)
+
+    def _beat(self) -> None:
+        while not self._stop.wait(self._heartbeat):
+            self._paint()
+
+    def _paint(self) -> None:
+        with self._lock:
+            if not self._current:
+                return
+            elapsed = time.monotonic() - self._started
+            tally = " ".join(f"{k}:{v}" for k, v in sorted(self._counts.items()))
+            line = (f"  [{self._index}/{self.total}] {self._current}  "
+                    f"{elapsed:.0f}s   {tally}")
+        width = shutil.get_terminal_size((100, 24)).columns - 1
+        self._stream.write("\r\033[2K" + line[:width])
+        self._stream.flush()

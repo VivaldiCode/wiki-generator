@@ -149,6 +149,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Route repositories to clients by size and run the "
                             "clients at the same time. Triages first, so nothing "
                             "already finished is touched again.")
+    multi.add_argument("--list-limit", type=int, default=60, metavar="N",
+                       help="Above this many repositories the triage lists only "
+                            "the ones needing work (default: 60).")
     multi.add_argument("--triage-only", action="store_true",
                        help="Classify the repositories, write the control file "
                             "and stop. No model is called.")
@@ -446,17 +449,39 @@ async def run_multiclient(config: WikiConfig, args) -> int:
     repos = find_repositories(config.repo_path) or [config.repo_path]
 
     print(f"Triaging {len(repos)} repositories (no model calls)...", flush=True)
-    states = state_mod.triage(config, repos, routing, output_root)
+    with board_mod.TriageProgress(len(repos)) as progress:
+        states = state_mod.triage(config, repos, routing, output_root,
+                                  on_event=progress)
     control = Path(args.control_file or Path.cwd() / state_mod.CONTROL_FILE)
     state_mod.save(control, states, routing, config, config.repo_path, output_root)
 
     counts = state_mod.totals(states)
     print(f"  done {counts['done']} | incomplete {counts['incomplete']} | "
-          f"untouched {counts['untouched']} | skipped {counts['skipped']}", flush=True)
-    for entry in states:
-        mark = {"done": "=", "incomplete": "~", "untouched": "+", "skipped": "-"}
+          f"untouched {counts['untouched']} | skipped {counts['skipped']}"
+          + (f" | error {counts['error']}" if counts.get("error") else ""), flush=True)
+    mark = {"done": "=", "incomplete": "~", "untouched": "+",
+            "skipped": "-", "error": "!"}
+    if counts["pending_by_client"]:
+        print("  pending: " + ", ".join(
+            f"{name} {n}" for name, n in sorted(counts["pending_by_client"].items())
+        ), flush=True)
+
+    # A per-repository listing is useful for a handful and unreadable for a
+    # thousand. Past the limit only what needs work is listed, and only the
+    # first few of those — the counts above already carry the scale.
+    listed = states if len(states) <= args.list_limit else [
+        s for s in states if s.needs_work or s.state == state_mod.ERROR
+    ]
+    hidden = 0
+    if len(listed) > args.list_limit:
+        hidden = len(listed) - args.list_limit
+        listed = listed[:args.list_limit]
+    for entry in listed:
         print(f"  {mark.get(entry.state, '?')} {entry.name:<28} "
               f"{entry.files:>6} files  {entry.client:<9} {entry.reason}", flush=True)
+    if hidden:
+        print(f"  ... and {hidden} more needing work "
+              f"(--list-limit to see them, or read {control.name})", flush=True)
     print(f"  Control file: {control}", flush=True)
 
     pending = [s for s in states if s.needs_work]
