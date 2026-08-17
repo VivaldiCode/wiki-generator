@@ -916,6 +916,32 @@ and the region, and leaves everything else to the AWS credential chain — the E
 task role, the EC2 instance profile, `AWS_PROFILE`, `~/.aws`. That is the point:
 on Fargate the role is resolved per call, and there is no key to leak.
 
+### On EC2, nothing needs configuring
+
+An IAM role attached to the instance — an **instance profile** — supplies both
+the credentials and the region through the instance metadata service, with no
+`~/.aws` and no environment variable anywhere:
+
+```bash
+wiki-generator --source /repos --output /wikis --bedrock   # no --aws-region
+```
+
+The region is read from the metadata service, and the preflight names the role
+it found instead of warning about a file that is not supposed to exist:
+
+```
+  ! Using the instance role attached to this machine: wiki-generator-task.
+```
+
+Both IMDSv2 (token handshake) and IMDSv1 are handled. Off EC2 the address is
+unroutable and settled once with a bare socket probe, so a laptop pays nothing
+for the lookup.
+
+> **In a container on EC2**, the metadata service is one hop further away, and
+> the IMDSv2 hop limit defaults to **1** — which blocks it. Raise it to 2:
+> `aws ec2 modify-instance-metadata-options --http-put-response-hop-limit 2 --instance-id <id>`.
+> The container run prints this when it detects an instance role.
+
 ### It fails before the run, not during it
 
 A generation run is tens of minutes. Every way Bedrock can be misconfigured

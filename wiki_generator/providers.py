@@ -38,6 +38,19 @@ CREDENTIAL_ENV = (
 
 REGION_ENV = ("AWS_REGION", "AWS_DEFAULT_REGION")
 
+# The instance metadata service. On EC2 this is where an attached IAM role — an
+# instance profile — supplies both the credentials and the region, with no
+# `~/.aws` and no environment variable anywhere. Off EC2 the address is
+# unroutable, so every call here is on a tight timeout and answered once.
+IMDS_HOST = "169.254.169.254"
+IMDS_TIMEOUT = 1.0
+# A link-local address answers in single-digit milliseconds on EC2 and not at
+# all anywhere else, so reachability is settled once with a bare socket. Without
+# it, two HTTP lookups on a laptop cost four seconds of every Bedrock preflight.
+IMDS_PROBE_TIMEOUT = 0.3
+_imds_cache: dict[str, str | None] = {}
+_imds_reachable: bool | None = None
+
 
 class ProviderError(RuntimeError):
     """The provider is not usable, and no amount of retrying will change that."""
@@ -58,6 +71,71 @@ def bedrock_env(region: str | None) -> dict[str, str]:
     return env
 
 
+def _imds(path: str) -> str | None:
+    """One metadata lookup, IMDSv2 first, answered once per process.
+
+    IMDSv2 needs a token from a PUT before any GET; v1 answers the GET directly.
+    Both are tried because an instance can be configured either way, and the
+    whole thing is bounded by a one-second timeout so a laptop that is not on
+    EC2 pays a second at most, once.
+    """
+    if path in _imds_cache:
+        return _imds_cache[path]
+    if not _reachable():
+        _imds_cache[path] = None
+        return None
+
+    import urllib.error
+    import urllib.request
+
+    headers: dict[str, str] = {}
+    try:
+        token_request = urllib.request.Request(
+            f"http://{IMDS_HOST}/latest/api/token", method="PUT",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"},
+        )
+        with urllib.request.urlopen(token_request, timeout=IMDS_TIMEOUT) as response:
+            headers["X-aws-ec2-metadata-token"] = response.read().decode()
+    except Exception:  # noqa: BLE001 - not on EC2, or v1-only; the GET decides
+        pass
+
+    try:
+        request = urllib.request.Request(
+            f"http://{IMDS_HOST}/latest/meta-data/{path}", headers=headers
+        )
+        with urllib.request.urlopen(request, timeout=IMDS_TIMEOUT) as response:
+            value = response.read().decode().strip() or None
+    except Exception:  # noqa: BLE001 - no metadata service reachable
+        value = None
+    _imds_cache[path] = value
+    return value
+
+
+def _reachable() -> bool:
+    """Is anything listening on the metadata address? Asked once."""
+    global _imds_reachable
+    if _imds_reachable is not None:
+        return _imds_reachable
+    import socket
+
+    try:
+        with socket.create_connection((IMDS_HOST, 80), IMDS_PROBE_TIMEOUT):
+            _imds_reachable = True
+    except OSError:
+        _imds_reachable = False
+    return _imds_reachable
+
+
+def instance_role() -> str | None:
+    """The IAM role attached to this EC2 instance, if there is one."""
+    names = _imds("iam/security-credentials/")
+    return names.splitlines()[0].strip() if names else None
+
+
+def instance_region() -> str | None:
+    return _imds("placement/region")
+
+
 def resolved_region(region: str | None) -> str | None:
     if region:
         return region
@@ -65,7 +143,13 @@ def resolved_region(region: str | None) -> str | None:
         value = os.environ.get(name)
         if value:
             return value
-    return _region_from_aws_config()
+    from_config = _region_from_aws_config()
+    if from_config:
+        return from_config
+    # Last, because it is the only source that costs a network call — and the
+    # one that makes an EC2 instance with an attached role work with no
+    # configuration at all.
+    return instance_region()
 
 
 def _region_from_aws_config() -> str | None:
@@ -100,9 +184,14 @@ def has_credentials() -> bool:
         os.environ.get("AWS_SHARED_CREDENTIALS_FILE", "~/.aws/credentials")
     ).expanduser()
     try:
-        return path.is_file() and path.stat().st_size > 0
+        if path.is_file() and path.stat().st_size > 0:
+            return True
     except OSError:
-        return False
+        pass
+    # An attached instance role is real credentials, and leaves no trace on disk
+    # or in the environment. Reporting "no credentials" here sends people
+    # looking for a file that is not supposed to exist.
+    return instance_role() is not None
 
 
 def preflight(provider: str, region: str | None, verbose: bool = False) -> list[str]:
@@ -123,13 +212,19 @@ def preflight(provider: str, region: str | None, verbose: bool = False) -> list[
     if not resolved_region(region):
         raise ProviderError(
             "Bedrock needs a region. Pass --aws-region, or set AWS_REGION. "
-            "It is not inferred from the instance."
+            "On EC2 it is read from the instance metadata service; if this is "
+            "an EC2 instance, that service did not answer — inside a container "
+            "that usually means the IMDSv2 hop limit is 1 (raise it to 2)."
         )
-    if not has_credentials():
+    role = instance_role()
+    if role:
+        warnings.append(f"Using the instance role attached to this machine: {role}.")
+    elif not has_credentials():
         warnings.append(
-            "No AWS credentials found in the environment or in ~/.aws. This is "
-            "expected on EC2/ECS/EKS, where the role is resolved at call time, "
-            "and a misconfiguration otherwise."
+            "No AWS credentials found: nothing in the environment, nothing in "
+            "~/.aws, and no instance role answering. On ECS the task role is "
+            "resolved at call time and this is expected; anywhere else it is a "
+            "misconfiguration."
         )
     if os.environ.get("ANTHROPIC_API_KEY"):
         # Not fatal — the CLI prefers the Bedrock path once the flag is set —

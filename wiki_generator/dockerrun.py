@@ -56,6 +56,7 @@ class Plan:
     inner_argv: list[str] = field(default_factory=list)
     mounts: list[tuple[str, str, str]] = field(default_factory=list)
     missing_credentials: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
     @property
     def argv(self) -> list[str]:
@@ -166,7 +167,25 @@ def plan(argv: list[str], tag: str = IMAGE, interactive: bool = True) -> Plan:
     else:
         argv += ["--control-file", f"{WIKIS_MOUNT}/wiki-control.json"]
 
-    for name in _clients_in(argv):
+    from . import providers
+
+    # An attached instance role needs nothing mounted: the container reaches the
+    # metadata service directly. Reporting ~/.aws as missing there would send
+    # someone looking for a file that is not supposed to exist.
+    needed = _clients_in(argv)
+    # Only asked when Bedrock is actually in play: the probe is cheap but it is
+    # still a socket, and a Grok run has no business touching it.
+    on_instance = "bedrock" in needed and providers.instance_role() is not None
+    for name in needed:
+        if name == "bedrock" and on_instance:
+            result.notes.append(
+                "Bedrock will use this machine's instance role; nothing mounted. "
+                "If the container cannot reach the metadata service, the IMDSv2 "
+                "hop limit is 1 by default and has to be 2 for containers: "
+                "aws ec2 modify-instance-metadata-options "
+                "--http-put-response-hop-limit 2 --instance-id <id>"
+            )
+            continue
         for host, inner_path, mode in CREDENTIALS.get(name, []):
             path = Path(host).expanduser()
             if path.exists():
@@ -180,7 +199,11 @@ def plan(argv: list[str], tag: str = IMAGE, interactive: bool = True) -> Plan:
     for host, inner_path, mode in mounts:
         docker_argv += ["-v", f"{host}:{inner_path}:{mode}"]
     for name in ("AWS_REGION", "AWS_PROFILE", "AWS_ACCESS_KEY_ID",
-                 "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "XAI_API_KEY"):
+                 "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                 # ECS puts the task role behind this; without it a task falls
+                 # back to the instance role, which is a different identity.
+                 "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+                 "AWS_CONTAINER_CREDENTIALS_FULL_URI", "XAI_API_KEY"):
         if os.environ.get(name):
             docker_argv += ["-e", name]
     docker_argv.append(tag)

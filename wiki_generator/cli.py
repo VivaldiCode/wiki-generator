@@ -1051,6 +1051,8 @@ def _run_in_docker(args, raw: list[str]) -> int:
 
     for host, inner_path, mode in plan.mounts:
         print(f"  mount {host} -> {inner_path} ({mode})", flush=True)
+    for note in plan.notes:
+        print(f"  {note}", flush=True)
     for missing in plan.missing_credentials:
         print(f"  ! no credentials to mount for {missing}", file=sys.stderr)
     print(flush=True)
