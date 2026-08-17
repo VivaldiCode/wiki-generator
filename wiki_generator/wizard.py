@@ -151,24 +151,32 @@ def run() -> list[str]:
             pick = _ask_choice(f"Client for {tier} repositories", usable,
                                default if default in usable else usable[0])
             argv += [f"--client-{tier}", pick]
-            tiers.append(pick)
+            tiers.append((tier, pick))
     else:
         client = _ask_choice("Client", usable,
                              "claude" if "claude" in usable else usable[0])
         argv += ["--client", client]
-        tiers.append(client)
-        argv += ["--model", _ask_model(client)]
+        tiers.append(("", client))
 
     if "opencode" in (argv + usable) and not clients.get(
         "opencode"
     ).capabilities.tool_restriction:
         argv.append("--allow-unrestricted-client")
 
-    # Bedrock is a property of the claude client only, so it is offered exactly
-    # when claude will actually run — and in a multiclient run it reaches only
-    # the claude lanes.
-    if "claude" in tiers:
-        argv += _ask_bedrock(multi)
+    # Bedrock is asked before any model, because it changes what a model is
+    # called: the subscription takes aliases like `haiku`, Bedrock takes a full
+    # inference-profile id. Asking in the other order offers an alias and then
+    # silently keeps it.
+    names = [name for _, name in tiers]
+    bedrock = _ask_bedrock(multi) if "claude" in names else []
+    argv += bedrock
+
+    on_bedrock = bool(bedrock)
+    for tier, name in tiers:
+        model = _ask_model(name, bedrock=on_bedrock and name == "claude")
+        if not model:
+            continue
+        argv += ([f"--model-{tier}", model] if tier else ["--model", model])
 
     # --- how ---------------------------------------------------------------
     language = _ask("Wiki language (en, pt, pt-br)", "en")
@@ -219,9 +227,16 @@ def _ask_where() -> bool:
     return choice == "2"
 
 
-def _ask_model(client: str) -> str:
-    """For opencode, offer the local models that can actually do the job."""
+def _ask_model(client: str, bedrock: bool = False) -> str:
+    """The model for one client, asked in the terms that client actually uses."""
     default = clients.get(client).default_model
+    if bedrock:
+        print("    On Bedrock a model is named by its full inference-profile id,")
+        print("    not by an alias — for example:")
+        print("      us.anthropic.claude-haiku-4-5-20251001-v1:0")
+        print("    `aws bedrock list-inference-profiles` shows what your account")
+        print("    has been granted in this region.")
+        return _ask("Bedrock model id", default)
     if client != "opencode" or not ollama.is_running():
         return _ask("Model", default)
 

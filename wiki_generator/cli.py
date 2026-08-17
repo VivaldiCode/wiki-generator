@@ -182,6 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Client for mid-sized repositories (default: claude).")
     multi.add_argument("--client-large", default="grok", metavar="CLIENT",
                        help="Client for large repositories (default: grok).")
+    for tier in ("small", "medium", "large"):
+        multi.add_argument(f"--model-{tier}", default=None, metavar="MODEL",
+                           help=f"Model for {tier} repositories (default: the "
+                                "client's own). Needed on Bedrock, where a model "
+                                "is named by its full inference-profile id.")
 
     provider = parser.add_argument_group("provider")
     provider.add_argument("--bedrock", action="store_true",
@@ -398,6 +403,7 @@ PROGRESS_PLAN = re.compile(r"^Plan: (\d+) model-generated")
 async def _run_lane(
     client: str, queue: list, config: WikiConfig, board, log_dir: Path,
     argv_base: list[str], bedrock: bool = False, region: str = "",
+    model: str = "",
 ) -> None:
     """One client, its repositories, one at a time.
 
@@ -421,6 +427,8 @@ async def _run_lane(
             argv += ["--bedrock"]
             if region:
                 argv += ["--aws-region", region]
+        if model:
+            argv += ["--model", model]
         pages_done = 0
         try:
             with log_path.open("w", encoding="utf-8") as log:
@@ -522,6 +530,15 @@ async def run_multiclient(config: WikiConfig, args) -> int:
     for entry in sorted(pending, key=lambda s: (s.files, s.name)):
         lanes.setdefault(entry.client, []).append(entry)
 
+    # A per-tier model reaches the lane running that tier. On Bedrock this is
+    # not a nicety: the aliases do not travel, and a model is named by its full
+    # inference-profile id.
+    tier_models = {
+        getattr(args, f"client_{tier}"): getattr(args, f"model_{tier}")
+        for tier in ("small", "medium", "large")
+        if getattr(args, f"model_{tier}")
+    }
+
     log_dir = control.parent / "wiki-logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     board = board_mod.Board(sorted(lanes), total_repos=len(pending))
@@ -553,7 +570,8 @@ async def run_multiclient(config: WikiConfig, args) -> int:
         await asyncio.gather(*(
             _run_lane(name, queue, config, board, log_dir, argv_base,
                       bedrock=config.provider == providers.BEDROCK,
-                      region=providers.resolved_region(config.aws_region) or "")
+                      region=providers.resolved_region(config.aws_region) or "",
+                      model=tier_models.get(name, ""))
             for name, queue in sorted(lanes.items())
         ))
     finally:

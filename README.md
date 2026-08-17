@@ -1011,18 +1011,27 @@ whole wiki again, with no record that it ever ran.
 
 ### Model IDs
 
-`--model` is passed to the CLI unchanged, so both the aliases and full Bedrock
-identifiers work:
+**Aliases do not travel to Bedrock.** The subscription takes `haiku`; Bedrock
+takes the full inference-profile id, and access is granted per model per region:
 
 ```bash
---model haiku
 --model us.anthropic.claude-haiku-4-5-20251001-v1:0
 ```
 
-Which Claude models your account can invoke, and whether they need a cross-region
-inference profile, is an AWS-side question — check **Bedrock → Model access** in
+`aws bedrock list-inference-profiles` shows what your account has been granted in
 the region you are running in. A model you have not been granted returns
 `AccessDeniedException`, which the generator reports verbatim and does not retry.
+
+In a multiclient run the model follows the tier, because only the Claude lanes
+are on Bedrock and the others keep their own names:
+
+```bash
+wiki-generator --source /repos --output /wikis --multiclient --bedrock \
+  --model-medium us.anthropic.claude-haiku-4-5-20251001-v1:0
+```
+
+The interactive setup asks about Bedrock **before** it asks for any model, for
+this exact reason — asking in the other order offers `haiku` and then keeps it.
 
 ---
 
