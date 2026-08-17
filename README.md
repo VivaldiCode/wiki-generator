@@ -750,9 +750,25 @@ mount is printed before the container starts:
 ### The control file
 
 `wiki-control.json` records the triage: every repository, its size, its client,
-its state and the reason. It is **a record, never an input** — the next run
-triages again rather than trusting it, so a wiki deleted or repaired by hand is
-noticed.
+its state and the reason.
+
+**It is reused rather than recomputed.** On a tree of thousands, classification
+is hours of work before the first page is written, so a saved triage is loaded
+if one covers the same set of repositories:
+
+```
+Reusing the triage in wiki-control.json (taken 2026-08-17T14:16:54Z). --retriage to redo it.
+```
+
+**And it is kept current as work finishes**, not written once at the end. Each
+repository is re-classified the moment its generation completes and the file is
+rewritten, so a run interrupted after eleven hours has eleven hours of recorded
+progress rather than none. That also removes the full re-triage that used to run
+at the end, which cost as much as the first one to learn what was already known.
+
+The trade-off is explicit: a reused triage does not see changes made outside the
+tool. Delete a wiki by hand and the saved state still calls it done, until
+`--retriage` looks again. The timestamp is printed so you can judge.
 
 > It holds the names and paths of the repositories you document. It is in
 > `.gitignore` for that reason; keep it that way if your repositories are private.

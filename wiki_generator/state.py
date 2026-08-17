@@ -341,6 +341,38 @@ def load(path: Path) -> dict:
         return {}
 
 
+def restore(path: Path) -> tuple[list[RepoState], str]:
+    """Rehydrate a saved triage. Returns the states and when it was taken.
+
+    On a large tree classification costs hours, so the run has to be able to
+    start from one already done rather than paying for it again.
+    """
+    payload = load(path)
+    if payload.get("schema") != 1:
+        return [], ""
+    fields = {f for f in RepoState.__dataclass_fields__}
+    states = []
+    for entry in payload.get("repos", []):
+        try:
+            states.append(RepoState(**{k: v for k, v in entry.items() if k in fields}))
+        except TypeError:
+            continue
+    return states, payload.get("updated_at", "")
+
+
+def retriage_one(
+    config: WikiConfig, state: RepoState, routing: Routing,
+    output_root: Path | None,
+) -> RepoState:
+    """Re-classify a single repository, after work was done on it."""
+    try:
+        return _triage_one(config, Path(state.path), routing, output_root)
+    except Exception as exc:  # noqa: BLE001
+        state.state = ERROR
+        state.reason = f"could not be re-classified: {exc}"[:200]
+        return state
+
+
 def save(path: Path, states: list[RepoState], routing: Routing, config: WikiConfig,
          source: Path, output_root: Path | None) -> Path:
     """Write the control file. It is a record, never an input to generation."""

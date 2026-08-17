@@ -169,6 +169,10 @@ def build_parser() -> argparse.ArgumentParser:
                             "(default: 1). Raise it when one client owns most of "
                             "the tree; total model calls in flight is this times "
                             "--concurrency.")
+    multi.add_argument("--retriage", action="store_true",
+                       help="Classify from scratch, ignoring a saved triage. On a "
+                            "large tree that costs hours, so a saved one is "
+                            "reused by default and kept current as work finishes.")
     multi.add_argument("--triage-workers", type=int, default=8, metavar="N",
                        help="Repositories classified at once (default: 8). "
                             "Classification is file walking and hashing, so this "
@@ -412,7 +416,7 @@ PROGRESS_PLAN = re.compile(r"^Plan: (\d+) model-generated")
 async def _run_lane(
     client: str, queue: list, config: WikiConfig, board, log_dir: Path,
     argv_base: list[str], bedrock: bool = False, region: str = "",
-    model: str = "", parallel: int = 1,
+    model: str = "", parallel: int = 1, on_done=None,
 ) -> None:
     """One client working its queue, `parallel` repositories at a time.
 
@@ -428,6 +432,8 @@ async def _run_lane(
         async with semaphore:
             await _run_repo(client, state, board, log_dir, argv_base,
                             bedrock, region, model)
+        if on_done:
+            await on_done(state)
 
     await asyncio.gather(*(one(state) for state in queue))
 
@@ -506,12 +512,24 @@ async def run_multiclient(config: WikiConfig, args) -> int:
         print(f"Claude lanes run on Bedrock "
               f"({providers.resolved_region(config.aws_region)}).", flush=True)
 
-    print(f"Triaging {len(repos)} repositories (no model calls)...", flush=True)
-    with board_mod.TriageProgress(len(repos)) as progress:
-        states = state_mod.triage(config, repos, routing, output_root,
-                                  on_event=progress, workers=args.triage_workers)
     control = Path(args.control_file or Path.cwd() / state_mod.CONTROL_FILE)
-    state_mod.save(control, states, routing, config, config.repo_path, output_root)
+
+    states, taken_at = ([], "") if args.retriage else state_mod.restore(control)
+    if states and {s.path for s in states} != {str(r) for r in repos}:
+        print(f"  The saved triage covers a different set of repositories; "
+              f"classifying again.", flush=True)
+        states = []
+    if states:
+        print(f"Reusing the triage in {control} (taken {taken_at}). "
+              f"--retriage to redo it.", flush=True)
+    else:
+        print(f"Triaging {len(repos)} repositories (no model calls)...", flush=True)
+        with board_mod.TriageProgress(len(repos)) as progress:
+            states = state_mod.triage(config, repos, routing, output_root,
+                                      on_event=progress,
+                                      workers=args.triage_workers)
+        state_mod.save(control, states, routing, config, config.repo_path,
+                       output_root)
 
     counts = state_mod.totals(states)
     print(f"  done {counts['done']} | incomplete {counts['incomplete']} | "
@@ -581,6 +599,23 @@ async def run_multiclient(config: WikiConfig, args) -> int:
         print(f"  {name:<9} {len(queue)} repositories", flush=True)
     print(flush=True)
 
+    # The control file is kept current as work finishes, not written once at the
+    # end: on a tree this size the run lasts hours, and a file that is only
+    # correct after the last repository is worthless if anything interrupts it.
+    by_path = {entry.path: index for index, entry in enumerate(states)}
+    write_lock = asyncio.Lock()
+
+    async def record(finished) -> None:
+        fresh = await asyncio.to_thread(
+            state_mod.retriage_one, config, finished, routing, output_root
+        )
+        async with write_lock:
+            states[by_path[finished.path]] = fresh
+            await asyncio.to_thread(
+                state_mod.save, control, states, routing, config,
+                config.repo_path, output_root,
+            )
+
     async def ticker() -> None:
         try:
             while True:
@@ -596,20 +631,20 @@ async def run_multiclient(config: WikiConfig, args) -> int:
                       bedrock=config.provider == providers.BEDROCK,
                       region=providers.resolved_region(config.aws_region) or "",
                       model=tier_models.get(name, ""),
-                      parallel=args.repos_in_parallel)
+                      parallel=args.repos_in_parallel, on_done=record)
             for name, queue in sorted(lanes.items())
         ))
     finally:
         tick.cancel()
         board.stop()
 
-    # Re-triage: the control file must describe what is true now, not what was
-    # true before the run.
-    states = state_mod.triage(config, repos, routing, output_root)
-    state_mod.save(control, states, routing, config, config.repo_path, output_root)
+    # No final re-triage: every repository worked on was re-classified as it
+    # finished, so the file already describes what is true now — and re-reading
+    # a tree of thousands to learn what is already recorded would cost as much
+    # as the first triage did.
     counts = state_mod.totals(states)
     print(f"\n{board.summary()}", flush=True)
-    print(f"  after re-triage: done {counts['done']} | incomplete "
+    print(f"  recorded in {control.name}: done {counts['done']} | incomplete "
           f"{counts['incomplete']} | untouched {counts['untouched']}", flush=True)
     return 0 if counts["incomplete"] == 0 and counts["untouched"] == 0 else 1
 
