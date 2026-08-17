@@ -46,6 +46,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "page.observability.summary": "Logs, metrics, health checks and diagnosing problems.",
         "page.reading-the-map.title": "Cartography — Reading the Map",
         "page.reading-the-map.summary": "Reading the dependency graph: hubs, layers, cycles and risks.",
+        "page.http-api.title": "HTTP API Reference",
+        "page.http-api.summary": "Every endpoint served: request, response, errors and auth.",
+        "page.rpc.title": "RPC Contracts",
+        "page.rpc.summary": "gRPC services, methods, messages and wire configuration.",
+        "page.messaging.title": "Messaging Contracts",
+        "page.messaging.summary": "Topics, queues and streams published and consumed, with payloads.",
+        "page.network.title": "Network Protocols",
+        "page.network.summary": "TCP, UDP and WebSocket listeners, framing and message layout.",
+        "page.consumed.title": "Consumed Interfaces",
+        "page.consumed.summary": "External systems this project calls, and what it depends on receiving.",
         "page.module.title": "Module: {module}",
         "page.module.summary": "{files} files, {lines} lines — {languages}",
         "page.reference.title": "Reference: {module}",
@@ -58,7 +68,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "sec.guides": "5. Guides",
         "sec.operations": "6. Operations",
         "sec.cartography": "7. Code Cartography",
-        "sec.verification": "8. Verification",
+        "sec.interfaces": "8. Interfaces and Contracts",
+        "sec.verification": "9. Verification",
         # --- verification report ---
         "verify.title": "Verification Report",
         "verify.intro": (
@@ -154,6 +165,53 @@ STRINGS: dict[str, dict[str, str]] = {
         "coverage.warning": (
             "> **Coverage warning:** this page does not document {missing}. "
             "Check the code directly for those files."
+        ),
+        # --- interfaces ---
+        "iface.inventory.title": "Interfaces — Detected Inventory",
+        "iface.inventory.intro": (
+            "Every place in the code where this project speaks to something else, "
+            "or is spoken to. Located by a static scan, so each row points at a "
+            "line that exists — but a match is evidence, not a conclusion: read "
+            "the location before relying on it, and expect the list to be "
+            "incomplete where a framework was not recognised."
+        ),
+        "iface.th.metric": "Metric",
+        "iface.th.value": "Value",
+        "iface.th.file": "File",
+        "iface.th.kind": "Kind",
+        "iface.th.protocol": "Protocol",
+        "iface.th.framework": "Detected as",
+        "iface.th.detail": "Captured",
+        "iface.th.location": "Location",
+        "iface.th.host": "Host",
+        "iface.th.occurrences": "Occurrences",
+        "iface.m.exposed": "Exposed interface matches",
+        "iface.m.consumed": "Consumed interface matches",
+        "iface.m.protocols": "Protocols",
+        "iface.m.specs": "Contract files",
+        "iface.m.hosts": "External hosts named in code",
+        "iface.m.scanned": "Files scanned",
+        "iface.h.map": "Interface map",
+        "iface.h.specs": "Contract files",
+        "iface.h.exposed": "Exposed by this project",
+        "iface.h.consumed": "Consumed by this project",
+        "iface.h.either": "Protocol in use, side undetermined",
+        "iface.h.hosts": "External hosts named in the code",
+        "iface.specs.intro": (
+            "These declare a contract explicitly. Where one disagrees with the "
+            "code, both are facts and the disagreement is the interesting one."
+        ),
+        "iface.hosts.intro": (
+            "Hosts written as literals in source files. Configured hosts do not "
+            "appear here — the value is in the configuration, not in the code."
+        ),
+        "iface.more": "... and {count} more matches, in `08-interfaces/interfaces.json`.",
+        "iface.d.callers": "Callers",
+        "iface.d.external": "External systems",
+        "iface.footer.deterministic": (
+            "<sub>Page computed deterministically by wiki-generator (static text "
+            "scan). Not model-generated. The machine-readable form of this table "
+            "is `08-interfaces/interfaces.json`.</sub>"
         ),
         # --- cartography ---
         "carto.file.title": "Cartography — File Graph",
@@ -305,6 +363,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "page.observability.summary": "Logs, metricas, health checks e diagnostico de problemas.",
         "page.reading-the-map.title": "Cartografia — Como Ler o Mapa",
         "page.reading-the-map.summary": "Leitura do grafo de dependencias: hubs, camadas, ciclos e riscos.",
+        "page.http-api.title": "Referencia da API HTTP",
+        "page.http-api.summary": "Cada endpoint servido: pedido, resposta, erros e autenticacao.",
+        "page.rpc.title": "Contratos RPC",
+        "page.rpc.summary": "Servicos gRPC, metodos, mensagens e configuracao do canal.",
+        "page.messaging.title": "Contratos de Mensageria",
+        "page.messaging.summary": "Topicos, filas e streams publicados e consumidos, com payloads.",
+        "page.network.title": "Protocolos de Rede",
+        "page.network.summary": "Listeners TCP, UDP e WebSocket, enquadramento e formato das mensagens.",
+        "page.consumed.title": "Interfaces Consumidas",
+        "page.consumed.summary": "Sistemas externos que este projeto chama, e do que depende na resposta.",
         "page.module.title": "Modulo: {module}",
         "page.module.summary": "{files} ficheiros, {lines} linhas — {languages}",
         "page.reference.title": "Referencia: {module}",
@@ -316,7 +384,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "sec.guides": "5. Guias",
         "sec.operations": "6. Operacao",
         "sec.cartography": "7. Cartografia do Codigo",
-        "sec.verification": "8. Verificacao",
+        "sec.interfaces": "8. Interfaces e Contratos",
+        "sec.verification": "9. Verificacao",
         "verify.title": "Relatorio de Verificacao",
         "verify.intro": (
             "Afirmacoes desta wiki confrontadas com o codigo-fonte por um revisor "
@@ -411,6 +480,56 @@ STRINGS: dict[str, dict[str, str]] = {
         "coverage.warning": (
             "> **Aviso de cobertura:** esta pagina nao documenta {missing}. "
             "Consulta o codigo diretamente para esses ficheiros."
+        ),
+        "iface.inventory.title": "Interfaces — Inventario Detetado",
+        "iface.inventory.intro": (
+            "Todos os pontos do codigo onde este projeto fala com algo externo, ou "
+            "e chamado de fora. Localizados por uma analise estatica de texto, por "
+            "isso cada linha aponta para um sitio que existe — mas uma "
+            "correspondencia e indicio, nao conclusao: abre a localizacao antes de "
+            "confiar nela, e conta com omissoes onde a framework nao foi reconhecida."
+        ),
+        "iface.th.metric": "Metrica",
+        "iface.th.value": "Valor",
+        "iface.th.file": "Ficheiro",
+        "iface.th.kind": "Tipo",
+        "iface.th.protocol": "Protocolo",
+        "iface.th.framework": "Detetado como",
+        "iface.th.detail": "Capturado",
+        "iface.th.location": "Localizacao",
+        "iface.th.host": "Host",
+        "iface.th.occurrences": "Ocorrencias",
+        "iface.m.exposed": "Correspondencias de interfaces expostas",
+        "iface.m.consumed": "Correspondencias de interfaces consumidas",
+        "iface.m.protocols": "Protocolos",
+        "iface.m.specs": "Ficheiros de contrato",
+        "iface.m.hosts": "Hosts externos nomeados no codigo",
+        "iface.m.scanned": "Ficheiros analisados",
+        "iface.h.map": "Mapa de interfaces",
+        "iface.h.specs": "Ficheiros de contrato",
+        "iface.h.exposed": "Expostas por este projeto",
+        "iface.h.consumed": "Consumidas por este projeto",
+        "iface.h.either": "Protocolo em uso, lado por determinar",
+        "iface.h.hosts": "Hosts externos nomeados no codigo",
+        "iface.specs.intro": (
+            "Estes declaram um contrato de forma explicita. Quando um deles nao "
+            "corresponde ao codigo, ambos sao factos — e a divergencia e a parte "
+            "interessante."
+        ),
+        "iface.hosts.intro": (
+            "Hosts escritos como literais no codigo-fonte. Hosts vindos de "
+            "configuracao nao aparecem aqui — o valor esta na configuracao, nao "
+            "no codigo."
+        ),
+        "iface.more": (
+            "... e mais {count} correspondencias, em `08-interfaces/interfaces.json`."
+        ),
+        "iface.d.callers": "Quem chama",
+        "iface.d.external": "Sistemas externos",
+        "iface.footer.deterministic": (
+            "<sub>Pagina calculada deterministicamente por wiki-generator (analise "
+            "estatica de texto). Nao gerada por modelo. A forma legivel por "
+            "maquina desta tabela esta em `08-interfaces/interfaces.json`.</sub>"
         ),
         "carto.file.title": "Cartografia — Grafo de Ficheiros",
         "carto.file.intro": (

@@ -571,6 +571,256 @@ def build_cartography_prompt(
 
 
 # ----------------------------------------------------------------------
+# The interface section: the contract surface, both directions.
+#
+# These pages exist to be read by a person AND parsed by a tool, which is the
+# whole point of the section — an OpenAPI document that a human can actually
+# read. So the structure is fixed rather than suggested: one `###` per endpoint,
+# the identifier in the heading, the same property table under every one. A
+# reader skims it; a model greps it.
+# ----------------------------------------------------------------------
+CONTRACT_RULES = """<contract_rules>
+This page is a CONTRACT REFERENCE. Two rules override any instinct to write prose:
+
+1. STRUCTURE IS FIXED. Every entry gets the same headings in the same order, even
+   when the answer is "none" — write the heading and put "none" under it. A
+   missing heading is worse than an empty one, because a tool reading this page
+   cannot tell "no authentication" from "nobody documented the authentication".
+2. IDENTIFIERS ARE COPIED, NEVER COMPOSED. Paths, method names, message names,
+   field names, topic names, status codes and port numbers are transcribed from
+   the file you read, character for character. A path assembled from REST habits
+   (`/api/v1/users/{id}` when the code declares `/users/<id>`) is the single most
+   damaging thing this page can contain: it looks right, it is wrong, and someone
+   will build against it.
+
+Route paths are usually SPLIT between the declaration and the mount. `@router.get("/{id}")`
+in a file whose router is included with `prefix="/api/v1/users"` is
+`GET /api/v1/users/{id}`. Find the mount before writing any path down. If you
+could not find it, write the fragment you did read and say the prefix is
+unconfirmed — do not guess it.
+</contract_rules>
+"""
+
+INTERFACE_PAGES: list[dict] = [
+    {
+        "key": "interfaces.http",
+        "path": "08-interfaces/http-api.md",
+        "title_key": "page.http-api.title",
+        "summary_key": "page.http-api.summary",
+        "section": "sec.interfaces",
+        "order": 820,
+        "gate": "has_http",
+        "protocols": ("http", "graphql"),
+        "directions": ("exposed",),
+        "goal": (
+            "Produce the reference for every HTTP endpoint this repository serves: "
+            "what to call, what to send, what comes back, and what happens when it "
+            "fails. The equivalent of an OpenAPI document, written so a person can "
+            "read it and a tool can parse it."
+        ),
+        "outline": """## Base URL and versioning
+(table: Environment | Base URL | Where it is set — only values the code or configuration actually contains; write "not defined in the repository" rather than inventing a hostname)
+## Authentication
+(the scheme, the header or cookie carrying it, where it is enforced with file:line, and what an unauthenticated call receives back)
+## Endpoint catalogue
+(table: Method | Path | What it does | Auth | Declared at — ONE ROW PER ENDPOINT, and this table must be complete before you write the detail below)
+## Endpoints
+(one `###` per endpoint. Its heading is the identifier, never prose and never
+translated: three hashes, then the HTTP method in capitals and the full path,
+the pair wrapped in backticks — a GET on `/api/v1/users/{id}` gives a heading
+reading GET followed by that path. Under each heading, in this order:
+
+- a property table: Handler | Declared at | Auth | Idempotent | Status codes
+- **Path parameters** — table: Name | Type | Required | Description | Validated at
+- **Query parameters** — table: Name | Type | Required | Default | Description
+- **Request body** — the content type, a table Field | Type | Required | Constraints | Description, then a fenced `json` example built ONLY from field names you read
+- **Responses** — table: Status | Content type | Body | When
+- **Errors** — table: Status | Code or message | Cause
+- **Notes** — pagination, rate limits, side effects, idempotency
+
+Write "none" under any of those headings that does not apply. Never drop one.)
+## Shared schemas
+(one `###` per request/response type used by more than one endpoint: a field table and where it is defined)
+## Conventions
+(error envelope, pagination style, content negotiation, versioning policy, CORS — each with the file that implements it)
+## Divergence from the declared contract
+(only if this repository contains an OpenAPI/GraphQL schema file: what the schema promises that the code does not do, and the reverse. If there is no schema file, write that there is none)
+## Gaps / Open questions""",
+        "investigate": """- open EVERY file named in `<detected_interfaces>` as an http or graphql match
+- then find the mount points: `include_router`, `app.use`, `RouterGroup`, `MapControllers`,
+  `@RequestMapping` on the class — the final path is declaration + mount
+- read the request/response models the handlers reference, not just the signatures
+- find the auth middleware and what it does to a request that fails it
+- Grep for the literal path of each endpoint before writing it, to confirm it exists
+- if the repository has an OpenAPI/Swagger/GraphQL schema file, read it in full: it is
+  the declared contract, and where it disagrees with the code, both facts belong here""",
+    },
+    {
+        "key": "interfaces.rpc",
+        "path": "08-interfaces/rpc.md",
+        "title_key": "page.rpc.title",
+        "summary_key": "page.rpc.summary",
+        "section": "sec.interfaces",
+        "order": 830,
+        "gate": "has_rpc",
+        "protocols": ("grpc",),
+        "directions": (),
+        "goal": (
+            "Document the RPC surface: services, methods, message shapes, streaming "
+            "modes and the wire configuration, on both the serving and the calling side."
+        ),
+        "outline": """## Services
+(table: Service | Package | Defined in | Methods | Served by this repository or called by it)
+## Detail per service
+(one `###` per service, its heading the service name verbatim. For each method a
+`####` with: the full signature copied from the definition, the streaming mode
+(unary / server-streaming / client-streaming / bidirectional), what it does,
+the deadline and retry policy if one is configured, and the error codes it returns)
+## Messages
+(one `###` per message type: a table Field | Number | Type | Repeated | Description. Field numbers are part of the contract — copy them)
+## Wire configuration
+(ports, TLS, interceptors, reflection, health checking, max message size — with file:line)
+## Clients built here
+(what this repository calls over RPC, and where the stubs are constructed)
+## Compatibility
+(reserved field numbers, deprecated methods, what would break an existing client)
+## Gaps / Open questions""",
+        "investigate": """- read every `.proto` / `.thrift` file in full — they ARE the contract, transcribe them
+- find the generated stubs and the server registration to see which services are actually served
+- find where channels are dialled to see which services are consumed
+- look for interceptors, deadlines and retry configuration around the client""",
+    },
+    {
+        "key": "interfaces.messaging",
+        "path": "08-interfaces/messaging.md",
+        "title_key": "page.messaging.title",
+        "summary_key": "page.messaging.summary",
+        "section": "sec.interfaces",
+        "order": 840,
+        "gate": "has_messaging",
+        "protocols": ("queue",),
+        "directions": (),
+        "goal": (
+            "Document the asynchronous contracts: which topics, queues and streams this "
+            "repository publishes to and consumes from, and the shape of every message "
+            "crossing them."
+        ),
+        "outline": """## Broker and topology
+(table: Broker | Purpose | Configured at | Connection settings)
+## Message catalogue
+(table: Topic/queue/stream | Direction (published/consumed) | Message | Producer or handler | Declared at)
+## Published messages
+(one `###` per message this repository emits: the destination name copied verbatim,
+a field table Field | Type | Required | Description, a fenced `json` example, the
+routing/partition key, ordering guarantees, and where it is published)
+## Consumed messages
+(one `###` per subscription: the source name, the fields the handler actually reads,
+the handler and its file:line, acknowledgement, retry policy, dead-letter destination,
+and whether the handler is idempotent — with the evidence for that answer)
+## Delivery guarantees
+(at-most-once / at-least-once / exactly-once, and what in the code establishes it)
+## Failure handling
+(what happens to a message that cannot be processed, and where it ends up)
+## Gaps / Open questions""",
+        "investigate": """- open every file named in `<detected_interfaces>` as a queue match
+- find the topic/queue names: they are usually constants or configuration, not literals at the call site
+- read the serializer or schema to get the message fields, not the publish call alone
+- look for consumer group names, prefetch counts, ack modes and dead-letter configuration""",
+    },
+    {
+        "key": "interfaces.network",
+        "path": "08-interfaces/network.md",
+        "title_key": "page.network.title",
+        "summary_key": "page.network.summary",
+        "section": "sec.interfaces",
+        "order": 850,
+        "gate": "has_network",
+        "protocols": ("tcp", "udp", "websocket"),
+        "directions": (),
+        "goal": (
+            "Document the raw network interfaces — TCP, UDP and WebSocket — at the level "
+            "someone would need to write an interoperating client: what listens where, "
+            "how bytes are framed, and what each message means."
+        ),
+        "outline": """## Listeners
+(table: Protocol | Address and port | Purpose | Bound at — copy the port numbers, never assume the default)
+## Wire protocol
+(how a message is delimited and encoded: length prefix, delimiter, fixed layout, JSON over the socket. For a binary format give a table Offset | Size | Field | Type | Meaning)
+## Message catalogue
+(one `###` per message type: direction, layout, meaning of each field, and an example — only if the code shows one)
+## Connection lifecycle
+(one ```mermaid block with `sequenceDiagram` for connect / handshake / exchange / close, plus keepalive and timeout values read from the code)
+## Outbound connections
+(what this repository connects to over a raw socket, and the same detail for that direction)
+## Failure handling
+(timeouts, reconnection, backoff, partial reads, what happens when the peer disappears)
+## Gaps / Open questions""",
+        "investigate": """- open every file named in `<detected_interfaces>` as a tcp, udp or websocket match
+- follow the read loop: how the code decides where one message ends and the next begins
+  is the part a client author needs and the part names never reveal
+- find the port numbers in configuration as well as in code
+- for WebSocket, read the message handler and list the event names it accepts""",
+    },
+    {
+        "key": "interfaces.consumed",
+        "path": "08-interfaces/consumed.md",
+        "title_key": "page.consumed.title",
+        "summary_key": "page.consumed.summary",
+        "section": "sec.interfaces",
+        "order": 860,
+        "gate": "has_consumers",
+        "protocols": (),
+        "directions": ("consumed",),
+        "goal": (
+            "Document the other side of the contract: every external interface this "
+            "repository calls, what it sends, what it depends on receiving, and what "
+            "happens here when that system changes or goes down."
+        ),
+        "outline": """## Outbound dependency catalogue
+(table: External system | Protocol | What it is used for | Called from | Credentials)
+## Detail per system
+(one `###` per external system, in this order:
+
+- the base URL or host and where it is configured — never invent one
+- **Operations called** — table: Method/endpoint or RPC | Purpose | Called at (file:line)
+- **What is sent** — the fields this repository puts in the request
+- **What is expected back** — ONLY the response fields this code actually reads; that
+  set is the real dependency, and it is usually much smaller than the provider's response
+- **Authentication** — the scheme and where the credential comes from. Never write a
+  credential value, even one present in the repository
+- **Timeouts, retries and backoff** — the configured values, with file:line
+- **Failure behaviour** — what this repository does when the call fails or times out)
+## Shared client configuration
+(base clients, interceptors, default headers, connection pools)
+## Breaking-change exposure
+(table: External system | A change that would break this repository | What would fail here — derived from the fields and status codes the code depends on)
+## Gaps / Open questions""",
+        "investigate": """- open every file named in `<detected_interfaces>` as a consumed match
+- read what the code does with each response: the fields it accesses are the contract,
+  the rest of the payload is not
+- find the timeout and retry configuration; its absence is itself worth stating
+- trace each credential back to the environment variable or secret store it comes from
+- for a vendor SDK, document the operations called, not the SDK's whole surface""",
+    },
+]
+
+
+def build_interface_prompt(
+    page: dict, scan: RepoScan, config: WikiConfig, interface_context: str = "",
+    page_index: str = "",
+) -> str:
+    return _page_prompt(
+        config=config,
+        context=repo_context(scan, config, tree_entries=140),
+        extra_context=interface_context + page_index + CONTRACT_RULES,
+        title=translator(config.language)(page["title_key"]),
+        goal=page["goal"],
+        outline=page["outline"],
+        investigate=page["investigate"],
+    )
+
+
+# ----------------------------------------------------------------------
 def build_module_prompt(
     module: ModuleInfo, scan: RepoScan, config: WikiConfig, graph_context: str = "",
     page_index: str = "",

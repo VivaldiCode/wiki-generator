@@ -127,6 +127,22 @@ TEST_MARKERS = ("test", "tests", "spec", "__tests__", "e2e")
 DOC_MARKERS = ("docs", "doc", "documentation", "wiki")
 
 
+def is_test_path(rel: str) -> bool:
+    """Whether this file is test material rather than the system itself.
+
+    Module-level because more than the scan needs it: a fixture repository
+    under `tests/` carries real-looking manifests, schemas and endpoints, and
+    anything that reads them as the project's own is describing the fixture.
+    """
+    lowered = rel.lower()
+    parts = lowered.split("/")
+    return any(marker in parts for marker in TEST_MARKERS) or any(
+        Path(lowered).name.startswith(p) or Path(lowered).stem.endswith(f"_{p}")
+        or Path(lowered).stem.endswith(f".{p}")
+        for p in ("test", "spec")
+    )
+
+
 # ----------------------------------------------------------------------
 def find_repositories(root: Path, max_depth: int = 3) -> list[Path]:
     """Discover the git repositories under `root`.
@@ -371,14 +387,7 @@ def scan_repo(config: WikiConfig) -> RepoScan:
             f"no analysable files (check --include/--exclude, or the directory is empty)"
         )
 
-    def is_test(rel: str) -> bool:
-        lowered = rel.lower()
-        parts = lowered.split("/")
-        return any(marker in parts for marker in TEST_MARKERS) or any(
-            Path(lowered).name.startswith(p) or Path(lowered).stem.endswith(f"_{p}")
-            or Path(lowered).stem.endswith(f".{p}")
-            for p in ("test", "spec")
-        )
+    is_test = is_test_path
 
     def is_doc(rel: str) -> bool:
         parts = rel.lower().split("/")

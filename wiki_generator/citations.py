@@ -99,7 +99,7 @@ def check(wiki_root: Path, repo_root: Path, repo_files: list[str] | None = None)
         page_rel = str(page.relative_to(wiki_root))
         # The verification report quotes invalid citations on purpose; counting
         # them here would make the invalid total grow with every error found.
-        if page_rel.startswith("08-verification/"):
+        if page_rel.startswith(("09-verification/", "08-verification/")):
             continue
         # Citations inside fenced examples are illustrations, not claims about
         # this repository — counting them inflates the invalid total.

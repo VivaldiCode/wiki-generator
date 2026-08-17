@@ -21,6 +21,7 @@ from .claude_client import ClaudeError, ClaudeRunner, ensure_cli_available
 from .config import DEFAULT_MODEL, WikiConfig
 from .generator import WikiGenerator, provenance_warning
 from .citations import check as check_citations, format_report
+from . import interfaces as interfaces_mod
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
@@ -126,6 +127,17 @@ def build_parser() -> argparse.ArgumentParser:
                                 "pages of empty headings. Use 0 to never skip.")
     structure.add_argument("--no-cartography", action="store_true",
                            help="Skip the file dependency graph.")
+    structure.add_argument("--interfaces", action="store_true",
+                           help="Document the contract surface: HTTP endpoints, "
+                                "gRPC services, message topics and raw sockets, "
+                                "both exposed and consumed. Adds section 8, and "
+                                "only for repositories where interfaces are "
+                                "actually found. Off by default because it "
+                                "changes the page plan, which regenerates an "
+                                "existing wiki in full.")
+    structure.add_argument("--no-interfaces", action="store_true",
+                           help="Force the interface section off, overriding a "
+                                "config file or saved profile.")
     structure.add_argument("--include", action="append", default=None, metavar="GLOB",
                            help="Only analyse files matching this glob (repeatable).")
     structure.add_argument("--exclude", action="append", default=None, metavar="GLOB",
@@ -311,6 +323,10 @@ def _config_from_args(args: argparse.Namespace) -> WikiConfig:
 
     if args.no_reference:
         config.include_reference = False
+    if args.interfaces:
+        config.interfaces = True
+    if args.no_interfaces:
+        config.interfaces = False
     if args.client:
         config.client = args.client
     if args.model is None:
@@ -366,6 +382,25 @@ def _synthetic_results(paths: list[Path], config: WikiConfig) -> list[PageResult
             )
         )
     return results
+
+
+def _inventory_result(config: WikiConfig, iscan) -> PageResult:
+    """Register the deterministic interface inventory in the wiki index."""
+    t = translator(config.language)
+    return PageResult(
+        spec=PageSpec(
+            key="interfaces.inventory",
+            path=interfaces_mod.INVENTORY_PATH,
+            title=t("iface.inventory.title"),
+            section="sec.interfaces",
+            kind="interfaces",
+            order=810,
+            prompt="",
+            summary=t("iface.m.exposed") + f": {len(iscan.exposed)}, "
+                    + t("iface.m.consumed") + f": {len(iscan.consumed)}",
+        ),
+        status="generated",
+    )
 
 
 # ----------------------------------------------------------------------
@@ -614,6 +649,11 @@ async def run_multiclient(config: WikiConfig, args) -> int:
                  "--language", config.language]
     if config.verify:
         argv_base.append("--verify")
+    # Must travel, and must travel explicitly: triage planned the interface
+    # pages, so a child that did not generate them would leave every one of
+    # those repositories permanently incomplete.
+    if config.interfaces:
+        argv_base.append("--interfaces")
     if args.allow_unrestricted_client:
         argv_base.append("--allow-unrestricted-client")
 
@@ -831,7 +871,33 @@ async def run(
             f"{len(graph.orphans())} orphan files"
         )
 
-    specs = build_plan(scan, config, graph_ctx)
+    # Interfaces are detected before planning because detection decides which
+    # pages exist: a repository with no contract surface gets no section, and
+    # pays nothing for one.
+    iscan = None
+    if config.interfaces:
+        print("Detecting interfaces (endpoints, RPC, topics, sockets)...", flush=True)
+        iscan = interfaces_mod.detect(scan, config)
+        if iscan.has_interfaces:
+            print(
+                f"  {len(iscan.exposed)} exposed | {len(iscan.consumed)} consumed | "
+                f"{len(iscan.spec_files)} contract file(s) | "
+                f"protocols: {', '.join(iscan.protocols)}"
+            )
+        else:
+            print("  no interfaces found — this repository gets no section 8.")
+    else:
+        # Free: read from the file listing the scan already has, never from the
+        # files themselves. Silence would let someone document an API-first
+        # repository without ever learning the section existed.
+        hint = interfaces_mod.cheap_hint(scan)
+        if hint:
+            # Not prefixed with `!`: in a multiclient run the lane latches the
+            # first `! ` line as the repository's failure reason, so a hint
+            # about an unused flag would be reported as why the repo failed.
+            print(f"  note: {hint}", flush=True)
+
+    specs = build_plan(scan, config, graph_ctx, iscan)
     if not specs:
         print("No pages to generate (check --only).", file=sys.stderr)
         return 1
@@ -849,6 +915,9 @@ async def run(
         if graph is not None:
             print("  - 07-cartography/file-graph.md      (deterministic)")
             print("  - 07-cartography/module-graph.md    (deterministic)")
+        if iscan is not None and iscan.has_interfaces:
+            print(f"  - {interfaces_mod.INVENTORY_PATH}    (deterministic)")
+            print(f"  - {interfaces_mod.SIDECAR_PATH}  (machine-readable)")
         if config.verify:
             wanted = (set(verify_mod.ANALYTICAL_KEYS)
                       if config.verify_scope == "analytical" else None)
@@ -895,7 +964,7 @@ async def run(
     results = list(report.results)
     if config.only:
         generated_keys = {r.spec.key for r in results}
-        for spec in build_plan(scan, replace(config, only=()), graph_ctx):
+        for spec in build_plan(scan, replace(config, only=()), graph_ctx, iscan):
             if spec.key not in generated_keys and (config.output_path / spec.path).is_file():
                 results.append(PageResult(spec=spec, status="cached"))
 
@@ -903,6 +972,24 @@ async def run(
         written = write_cartography(graph, config)
         results += _synthetic_results(written, config)
         print(f"\nCartography written: {len(written)} files in 07-cartography/")
+
+    if iscan is not None and iscan.has_interfaces:
+        written = interfaces_mod.write_inventory(iscan, config)
+        results.append(_inventory_result(config, iscan))
+        print(f"Interface inventory written: {len(written)} files in 08-interfaces/")
+        # A repository that stopped exposing gRPC should stop having a gRPC
+        # contract page. Nothing else would remove it: an unplanned page is
+        # never visited again, so it would sit there looking current forever.
+        if not config.only:
+            dropped = interfaces_mod.prune(
+                config.output_path,
+                {spec.path for spec in specs if spec.kind == "interfaces"}
+                | {interfaces_mod.INVENTORY_PATH},
+            )
+            for path in dropped:
+                print(f"  - removed {path} (no longer applies)")
+    elif not config.only:
+        interfaces_mod.clear_artifacts(config.output_path)
 
     nav_files = assemble(config, scan, results)
 
@@ -1078,7 +1165,12 @@ async def _verify_phase(
     for result in results:
         if wanted is not None and result.spec.key not in wanted:
             continue
-        if result.spec.kind == "cartography":
+        # Deterministic pages carry no prompt because no model wrote them.
+        # Verifying one spends a page of budget fact-checking a table Python
+        # regenerates identically on the next run, so no finding could ever be
+        # acted on — and it is invisible to the --dry-run estimate, which is
+        # built from `specs` and never contains it.
+        if result.spec.kind == "cartography" or not result.spec.prompt:
             continue
         # --only runs hand back PageResults with empty markdown; the file on disk
         # is the only reliable source of page text.
@@ -1126,7 +1218,7 @@ async def _verify_phase(
                 title=t("verify.title"),
                 section="sec.verification",
                 kind="verification",
-                order=810,
+                order=910,
                 prompt="",
                 summary=t("verify.m.findings") + f": {len(verdict.findings)}",
             ),

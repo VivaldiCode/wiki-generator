@@ -186,6 +186,13 @@ def run() -> list[str]:
     min_lines = _ask_int("Skip repositories with fewer content lines than", 50)
     argv += ["--min-lines", str(min_lines)]
 
+    print("\n  Interfaces: a reference section for the endpoints, RPC services,")
+    print("  topics and sockets this code exposes and calls — written only for")
+    print("  repositories where they are found. On an existing wiki it changes")
+    print("  the page plan, so those repositories are regenerated in full.")
+    if _ask_yes("Document the interface contracts (--interfaces)", default=True):
+        argv.append("--interfaces")
+
     if _ask_yes("Check the finished wiki's claims against the code (--verify), "
                 "slow and costly", default=False):
         argv.append("--verify")
@@ -344,8 +351,9 @@ def describe(argv: list[str]) -> str:
         parts.append("multiclient " + " ".join(tiers))
     elif "--client" in pairs:
         parts.append(f"{pairs['--client']}/{pairs.get('--model', 'default')}")
-    if "--verify" in argv:
-        parts.append("--verify")
+    for flag in ("--interfaces", "--verify"):
+        if flag in argv:
+            parts.append(flag)
     return "  ".join(parts) or " ".join(argv[:6])
 
 

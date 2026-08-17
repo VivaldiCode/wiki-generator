@@ -19,6 +19,7 @@ wiki-generator --source ~/code/my-project
 - [Usage guide](#usage-guide)
 - [What it produces](#what-it-produces)
 - [Code cartography](#code-cartography)
+- [Interface contracts (`--interfaces`)](#interface-contracts---interfaces)
 - [Built-in verification](#built-in-verification)
 - [Semantic verification (`--verify`)](#semantic-verification---verify)
 - [Running several clients at once](#running-several-clients-at-once)
@@ -438,13 +439,25 @@ wiki/
 │   ├── deployment.md                build, CI/CD, containers
 │   └── observability.md             logs, metrics, troubleshooting
 │
-└── 07-cartography/                  CODE CARTOGRAPHY
-    ├── file-graph.md                Mermaid graph: which file imports which
-    ├── module-graph.md              aggregated graph + coupling matrix
-    ├── modules/<module>.md          per-module detail (large repositories)
-    ├── file-graph.mmd               full graph, untruncated
-    ├── graph.json                   graph as JSON for external tooling
-    └── reading-the-map.md           reading the graph: hubs, layers, cycles
+├── 07-cartography/                  CODE CARTOGRAPHY
+│   ├── file-graph.md                Mermaid graph: which file imports which
+│   ├── module-graph.md              aggregated graph + coupling matrix
+│   ├── modules/<module>.md          per-module detail (large repositories)
+│   ├── file-graph.mmd               full graph, untruncated
+│   ├── graph.json                   graph as JSON for external tooling
+│   └── reading-the-map.md           reading the graph: hubs, layers, cycles
+│
+├── 08-interfaces/                   CONTRACTS  (--interfaces, only when found)
+│   ├── inventory.md                 every detected interface, with file:line
+│   ├── interfaces.json              the same inventory, machine-readable
+│   ├── http-api.md                  endpoint reference: request, response, errors
+│   ├── rpc.md                       gRPC services, methods, messages
+│   ├── messaging.md                 topics and queues, published and consumed
+│   ├── network.md                   TCP/UDP/WebSocket listeners and framing
+│   └── consumed.md                  what this project calls, and what it depends on
+│
+└── 09-verification/                 VERIFICATION  (--verify)
+    └── report.md                    claims checked against the code
 ```
 
 Every page has a **mandatory outline** — same headings, same order, in any repository.
@@ -503,6 +516,88 @@ module instead of staring at one diagram.
 
 The methodology is formalized as a reusable skill in
 [`.claude/skills/code-cartography/SKILL.md`](.claude/skills/code-cartography/SKILL.md).
+
+---
+
+## Interface contracts (`--interfaces`)
+
+The rest of the wiki describes the code from the inside. This section describes it from
+the outside: the endpoints, RPC methods, topics and sockets through which everything
+that is not this repository talks to it — and the ones it talks to in return.
+
+It is what an OpenAPI document would tell you, written so that a person can read it and
+a tool can parse it, and extended to the protocols OpenAPI does not cover.
+
+```bash
+wiki-generator --repo ./my-api --interfaces
+```
+
+**Both directions, because a contract has two sides.** The provider side answers "what
+can I call and what comes back". The consumer side answers the question that actually
+breaks systems: *if the other end changes, what fails here?* That page lists only the
+response fields this code reads — which is the real dependency, and usually far smaller
+than what the provider returns.
+
+### Only for repositories that have interfaces
+
+Detection runs first and decides which pages exist. A library with no network surface
+gets no section and pays nothing for one. What is looked for:
+
+| Protocol | Page | Detected from |
+|---|---|---|
+| HTTP / REST / GraphQL | `http-api.md` | route declarations across ~20 frameworks, `openapi.yaml`, `.graphql` |
+| gRPC / Thrift | `rpc.md` | `.proto` files, server registration, dialled channels |
+| Kafka, RabbitMQ, SQS/SNS, NATS, MQTT, Pub/Sub, job queues | `messaging.md` | the client library, not the method name |
+| TCP, UDP, WebSocket | `network.md` | binds, listeners, upgrades, socket constants |
+| Everything called outward | `consumed.md` | HTTP clients, vendor SDKs, hosts written in source |
+
+The section is written only where the evidence supports it, and each page is gated
+separately: a REST service with no queues gets the endpoint reference and the consumer
+page, and no others.
+
+### The inventory page is computed, not written
+
+`08-interfaces/inventory.md` and its `interfaces.json` twin are produced by Python, from
+a static scan. They cost nothing, they are exact about **location** — every row points
+at a file and line that exists — and they are honest about the rest.
+
+That honesty is the design. A regex match proves a line exists; it does not prove the
+line is a route, that a captured path is complete (a router mounted under a prefix has a
+longer one), or that the list is exhaustive. So the scan is handed to the model as
+*where to look*, never as the answer, and the model is told to find what it missed.
+
+Four things the scan deliberately does **not** count, each because it produced a real
+false positive when it did:
+
+- **test files** — a mocked `urlopen` and a fixture `openapi.yaml` describe the fixture,
+  not the system (this was 4 of 4 false endpoints on one repository, and 2 of 2 spec
+  files on two others);
+- **comments and docstrings** — `celery -A app.tasks worker` in a usage example is
+  documentation of a command, not evidence of a worker;
+- **method names without a path** — `@mock.patch(...)` is not a `PATCH` route, which is
+  why an HTTP rule requires a captured literal starting with `/`;
+- **hosts that are documentation** — `apache.org`, `w3.org` and their subdomains.
+
+### Coverage is enforced, not hoped for
+
+Every route literal the scan captured is a required marker on the endpoint page. A page
+that omits one is regenerated with the missing paths listed explicitly — the same
+mechanism the per-file reference pages use. If a path is still missing after the retry,
+the page says so rather than pretending to be complete.
+
+### Cost, and why it is off by default
+
+The page plan goes into every page's prompt, and the prompt is hashed into every page's
+fingerprint. Turning this on for a repository that **has** interfaces therefore
+regenerates that wiki in full; a repository with none is unaffected, because its plan
+does not change.
+
+That is the whole reason for the flag. Enable it before generating a tree, not after:
+on repositories not yet documented it costs only the new pages, typically two or three.
+
+When it is off and a repository contains a `.proto` or an `openapi.yaml`, the run says
+so in one line. That check reads the file listing the scan already has, so it costs
+nothing even across a thousand repositories.
 
 ---
 
@@ -581,7 +676,7 @@ never reads as clean.
 
 ### Output
 
-- **`08-verification/report.md`** — in the wiki, wikilinked to each page it indicts.
+- **`09-verification/report.md`** — in the wiki, wikilinked to each page it indicts.
 - **`.wiki-verify/findings.json`** — structured and diffable, for CI.
 
 Both are **deleted when `--verify` is off**: a stale report claiming errors that were
@@ -1241,6 +1336,8 @@ drift as code is edited and no model gets them reliably right.
 | `--max-reference-pages` | `60` | Cap on reference pages |
 | `--no-reference` | — | Skip the low-level reference |
 | `--no-cartography` | — | Skip the dependency graph |
+| `--interfaces` | off | Document the contract surface, where one is found ([details](#interface-contracts---interfaces)) |
+| `--no-interfaces` | — | Force it off, overriding a config file or saved profile |
 | `--single` | — | Treat the whole tree as a single repository |
 | `--min-lines` | `50` | Skip repositories below this many lines of content (`0` disables) |
 | `--include` / `--exclude` | — | File globs (repeatable) |

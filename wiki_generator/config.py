@@ -65,6 +65,15 @@ class WikiConfig:
     verify_timeout: int = 1800            # a batch fan-out exceeds the 600s default
     verify_fail_on: str = "none"          # none | any | high
     include_reference: bool = True
+
+    # --- interface contracts (opt-in) ---
+    # Off by default for one reason: the plan's page list goes into every page's
+    # prompt, and the prompt is hashed into every page's fingerprint. Turning
+    # this on for a repository that has interfaces therefore regenerates that
+    # wiki in full. A repository with none is unaffected, because its plan does
+    # not change. Deciding to pay for that belongs to whoever pays.
+    interfaces: bool = False
+
     include_globs: tuple[str, ...] = ()
     exclude_globs: tuple[str, ...] = ()
 

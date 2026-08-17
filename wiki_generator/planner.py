@@ -7,13 +7,16 @@ from .models import PageSpec, RepoScan
 from .prompts import (
     CARTOGRAPHY_PAGE,
     CORE_PAGES,
+    INTERFACE_PAGES,
     build_cartography_prompt,
     build_core_prompt,
+    build_interface_prompt,
     build_module_prompt,
     build_reference_prompt,
     wiki_pages_block,
 )
 from .i18n import translator
+from .interfaces import INVENTORY_PATH, MAX_REQUIRED_ROUTES, context_block
 from .utils import chunked
 
 # Canonical section keys, resolved to text by `i18n` at render time.
@@ -25,12 +28,13 @@ SECTION_ORDER = [
     "sec.guides",
     "sec.operations",
     "sec.cartography",
+    "sec.interfaces",
     "sec.verification",
 ]
 
 
 def build_plan(
-    scan: RepoScan, config: WikiConfig, graph_context: str = ""
+    scan: RepoScan, config: WikiConfig, graph_context: str = "", iscan=None
 ) -> list[PageSpec]:
     t = translator(config.language)
     specs: list[PageSpec] = []
@@ -143,14 +147,57 @@ def build_plan(
             lambda index: build_cartography_prompt(scan, config, graph_context, index)
         )
 
+    # --- interfaces: only the pages this repository actually earns ------
+    if iscan is not None and iscan.has_interfaces:
+        routes = iscan.routes()
+        for page in INTERFACE_PAGES:
+            if not getattr(iscan, page["gate"]):
+                continue
+            # Each page sees only the evidence for its own protocols: a page
+            # about sockets does not need three screens of Kafka matches.
+            block = context_block(
+                iscan, tuple(page["protocols"]), tuple(page["directions"])
+            )
+            specs.append(
+                PageSpec(
+                    key=page["key"],
+                    path=page["path"],
+                    title=t(page["title_key"]),
+                    section=page["section"],
+                    kind="interfaces",
+                    order=page["order"],
+                    summary=t(page["summary_key"]),
+                    prompt="",
+                    scope_files=all_files,
+                    # The detector captured these literals from the code, so a
+                    # page that omits one omitted an endpoint that exists. Only
+                    # the HTTP page: nothing else yields an unambiguous literal.
+                    required_markers=(routes[:MAX_REQUIRED_ROUTES]
+                                      if page["key"] == "interfaces.http" else []),
+                )
+            )
+            prompt_builders.append(
+                lambda index, page=page, block=block: build_interface_prompt(
+                    page, scan, config, block, index
+                )
+            )
+
     # 2nd pass: now that every page is known, build the prompts with the vault
-    # index, so the model cannot invent wikilink targets.
-    page_index = wiki_pages_block(
-        [(spec.path[:-3], spec.title) for spec in specs]
-        + [("07-cartography/file-graph", "Cartografia — Grafo de Ficheiros"),
-           ("07-cartography/module-graph", "Cartografia — Grafo de Modulos")]
-        if graph_context else [(spec.path[:-3], spec.title) for spec in specs]
-    )
+    # index, so the model cannot invent wikilink targets. The deterministic
+    # pages are listed too — they are real notes, and a link to one resolves.
+    listed = [(spec.path[:-3], spec.title) for spec in specs]
+    if graph_context:
+        # These two titles are literals rather than `t(...)` calls, and wrongly
+        # in Portuguese, because the string lands in every page's prompt and the
+        # prompt is hashed into every page's fingerprint. Translating them here
+        # would mark every existing wiki stale and re-bill its owner for a label
+        # that appears in no output. It is fixed when the structure version next
+        # changes, and not before.
+        listed += [("07-cartography/file-graph", "Cartografia — Grafo de Ficheiros"),
+                   ("07-cartography/module-graph", "Cartografia — Grafo de Modulos")]
+    if iscan is not None and iscan.has_interfaces:
+        listed.append((INVENTORY_PATH[:-3], t("iface.inventory.title")))
+    page_index = wiki_pages_block(listed)
     for spec, builder in zip(specs, prompt_builders):
         spec.prompt = builder(page_index)
 

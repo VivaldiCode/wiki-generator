@@ -39,7 +39,7 @@ from .utils import sha1_text
 VERIFY_PROMPT_VERSION = "2"
 
 FINDINGS_DIR = ".wiki-verify"
-REPORT_PATH = "08-verification/report.md"
+REPORT_PATH = "09-verification/report.md"
 
 # Claims per checking batch. Real parallelism is verify_concurrency * this.
 CLAIMS_PER_BATCH = 8
@@ -57,6 +57,12 @@ ANALYTICAL_KEYS = (
     "architecture.overview",
     "architecture.integrations",
     "operations.configuration",
+    # Present only when --interfaces planned them; an absent key filters to
+    # nothing. Included because an endpoint reference is the densest page of
+    # copied identifiers in the wiki, and copied identifiers are what the audit
+    # found being invented.
+    "interfaces.http",
+    "interfaces.consumed",
 )
 
 # Tool names come from the client, never from a constant: an allowlist naming
@@ -659,6 +665,12 @@ def write_report(config: WikiConfig, report: VerifyReport, t) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    # The section moved from 8 to 9 when interfaces took 8. Removing the old
+    # directory only when verification is OFF would leave anyone who keeps using
+    # --verify with two reports side by side, the older one frozen and wrong,
+    # and only the new one in the index.
+    shutil.rmtree(config.output_path / "08-verification", ignore_errors=True)
+
     # Machine-readable sidecar: diffable, CI-consumable, immune to the link and
     # citation checks, and the input a future --verify-fix would consume.
     (config.output_path / FINDINGS_DIR).mkdir(parents=True, exist_ok=True)
@@ -683,4 +695,8 @@ def write_report(config: WikiConfig, report: VerifyReport, t) -> Path:
 def clear_artifacts(output_path: Path) -> None:
     """Remove verification output. A stale report is itself a factual error."""
     shutil.rmtree(output_path / FINDINGS_DIR, ignore_errors=True)
+    shutil.rmtree(output_path / "09-verification", ignore_errors=True)
+    # The section moved from 8 to 9 when the interfaces section took 8. A wiki
+    # written before that still has the old directory, and a stale report is
+    # exactly what this function exists to remove.
     shutil.rmtree(output_path / "08-verification", ignore_errors=True)

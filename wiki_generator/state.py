@@ -31,6 +31,7 @@ from .cartography import build_graph, graph_context
 from .config import WikiConfig
 from .generator import MANIFEST_NAME, Manifest, _fingerprint
 from .i18n import STRINGS, translator
+from .interfaces import detect as detect_interfaces
 from .journal import STATE_FILE as RUN_MARKER, iter_pages
 from .planner import build_plan
 from .scanner import EmptyRepositoryError, count_repo_files, scan_repo, substance
@@ -235,7 +236,11 @@ def _triage_one(
     graph_ctx = ""
     if scoped.extra.get("cartography", True):
         graph_ctx = graph_context(build_graph(scan, scoped))
-    specs = build_plan(scan, scoped, graph_ctx)
+    # Same reason, and the same cost: detection decides which interface pages
+    # the plan contains, so a triage that skipped it would count pages the run
+    # will generate as pages the run did not.
+    iscan = detect_interfaces(scan, scoped) if scoped.interfaces else None
+    specs = build_plan(scan, scoped, graph_ctx, iscan)
     base.pages_expected = len(specs)
 
     # Only now, with the scan done, is "untouched" a fact rather than an
