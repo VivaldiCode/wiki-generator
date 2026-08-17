@@ -23,3 +23,10 @@ wg-logs/
 .DS_Store
 .idea/
 .vscode/
+
+# Run control, written where the tool is invoked. It holds the names and paths
+# of the repositories being documented — private ones included — and this
+# repository is public. Never commit it.
+wiki-control.json
+*.wiki-profile.json
+wiki-logs/

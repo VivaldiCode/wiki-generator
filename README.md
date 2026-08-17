@@ -21,6 +21,7 @@ wiki-generator --source ~/code/my-project
 - [Code cartography](#code-cartography)
 - [Built-in verification](#built-in-verification)
 - [Semantic verification (`--verify`)](#semantic-verification---verify)
+- [Running several clients at once](#running-several-clients-at-once)
 - [Choosing a client](#choosing-a-client)
 - [Running on AWS with Bedrock](#running-on-aws-with-bedrock)
 - [Cost tracking](#cost-tracking)
@@ -28,6 +29,33 @@ wiki-generator --source ~/code/my-project
 - [Options reference](#options-reference)
 - [How it works](#how-it-works)
 - [Limitations](#limitations)
+
+---
+
+## Interactive setup
+
+Run it with no arguments and it asks, checking what it can instead of asking:
+
+```
+wiki-generator — interactive setup
+
+Clients on this machine:
+  yes  claude    /Users/me/.local/bin/claude
+  yes  grok      /Users/me/.grok/bin/grok
+  no   opencode     (see opencode's install docs)
+
+  Repository, or a folder containing several [/Users/me/code]:
+    4 git repositories found under /Users/me/code.
+  Where the wikis go (one folder per repository) [/Users/me/wikis]:
+  Split the 4 repositories across 2 clients by size (y/n) [y]:
+  ...
+  Save these answers to reuse later (y/n) [y]:
+    Saved. Reuse with: wiki-generator --profile /Users/me/wiki.wiki-profile.json
+```
+
+Piped or scripted, it prints `--help` instead — the wizard only appears when
+there is someone there to answer. A saved profile replays with `--profile`, and
+flags given alongside it win, so a saved run can be adjusted without editing it.
 
 ---
 
@@ -523,6 +551,74 @@ Use `--verify-fail-on any|high` for CI, which makes surviving findings exit **4*
 | `--verify-total-usd` | `25.00` | Across the whole run (`0` disables) |
 | `--verify-timeout` | `1800` | Per call; a batch fan-out exceeds the 600s default |
 | `--verify-fail-on` | `none` | `none` \| `any` \| `high` -> exit 4 |
+
+---
+
+## Running several clients at once
+
+Documenting thirty repositories is not one job, it is thirty — and the expensive
+mistake is redoing one that was already finished. `--multiclient` triages first,
+routes what is left to a client by size, and runs the clients together.
+
+```bash
+wiki-generator --source ~/code --output ~/wikis --multiclient
+```
+
+### Triage decides what is touched
+
+Before any model is called, every repository is classified from what is on disk:
+
+| State | Meaning | What happens |
+|---|---|---|
+| **done** | every planned page exists, its fingerprint matches, no failure recorded | never touched again |
+| **incomplete** | pages missing, out of date, a failure in the index, or an interrupted run | resumed |
+| **untouched** | no wiki | generated from zero |
+| **skipped** | nothing to document (below `--min-lines`) | left alone |
+
+A finished wiki is judged **against whatever wrote it**, not against the client
+routing would pick today — otherwise changing the routing would re-bill the
+whole tree. Failures are found by reading the index for whatever the client
+called its error, so `claude exited with code 1`, `Not signed in` and
+`token refresh failed` all count.
+
+`--triage-only` does this and stops. No model is called either way.
+
+### Routing is by size
+
+| Repository | Default client | Why |
+|---|---|---|
+| ≤ 200 files | `opencode` | small enough that a cheap or local model suffices |
+| 200–2000 files | `claude` | the default |
+| ≥ 2000 files | `grok` | denser output, and cheaper per page on long work |
+
+Change the boundaries with `--small-max-files` / `--large-min-files`, and the
+clients with `--client-small` / `--client-medium` / `--client-large`.
+
+### One line per client
+
+```
+  claude -> api-gateway
+  grok -> monolith
+[claude   ] api-gateway   12/34 pages   4m
+[grok     ] monolith       3/180 pages  9m
+[opencode ] idle
+  repositories: 7 done, 1 incomplete, 0 failed, 14 left of 22
+```
+
+The lanes are redrawn in place on a terminal and appended only when something
+changes when the output is a file, because a log that repeats an unchanged
+status every five seconds is unreadable. Each repository's full output goes to
+`wiki-logs/<repo>.log`.
+
+### The control file
+
+`wiki-control.json` records the triage: every repository, its size, its client,
+its state and the reason. It is **a record, never an input** — the next run
+triages again rather than trusting it, so a wiki deleted or repaired by hand is
+noticed.
+
+> It holds the names and paths of the repositories you document. It is in
+> `.gitignore` for that reason; keep it that way if your repositories are private.
 
 ---
 

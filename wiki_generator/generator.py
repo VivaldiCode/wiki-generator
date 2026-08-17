@@ -141,7 +141,13 @@ def _fingerprint(spec: PageSpec, scan: RepoScan, config: WikiConfig) -> str:
 
 # ----------------------------------------------------------------------
 class WikiGenerator:
-    def __init__(self, config: WikiConfig, scan: RepoScan) -> None:
+    def __init__(
+        self, config: WikiConfig, scan: RepoScan, reporter=None
+    ) -> None:
+        # With several clients running at once, per-page lines from three
+        # repositories interleave into noise. When a reporter is given, the
+        # progress goes to it and nothing is printed here.
+        self.reporter = reporter
         self.config = config
         self.scan = scan
         self.manifest = Manifest(config.output_path / MANIFEST_NAME)
@@ -162,12 +168,16 @@ class WikiGenerator:
 
         # On a run lasting tens of minutes, knowing only what already finished is
         # not enough: this task reports throughput and time remaining while you wait.
-        ticker = asyncio.create_task(self._progress_ticker())
+        # One ticker per run is right for a single client; under a shared board
+        # the board owns the display.
+        ticker = (asyncio.create_task(self._progress_ticker())
+                  if self.reporter is None else None)
         try:
             tasks = [self._generate_page(runner, spec) for spec in specs]
             results = await asyncio.gather(*tasks)
         finally:
-            ticker.cancel()
+            if ticker is not None:
+                ticker.cancel()
 
         # Only the keys in this run survive. Unioning with the existing keys — as
         # this once did — made the filter a no-op and stale entries accumulated.
@@ -323,5 +333,8 @@ class WikiGenerator:
         if kept:
             line += ("  (previous version still matches the sources)" if current
                      else "  (kept the previous version, now out of date)")
+        if self.reporter is not None:
+            self.reporter(spec, status, detail)
+            return
         stream = sys.stderr if status == "failed" else sys.stdout
         print(line, file=stream, flush=True)

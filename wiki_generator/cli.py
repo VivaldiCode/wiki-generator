@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import signal
 import sys
 import time
@@ -21,7 +22,7 @@ from .citations import check as check_citations, format_report
 from .links import validate_and_fix
 from .models import PageResult, PageSpec
 from .planner import build_plan
-from . import clients, costs, providers
+from . import board as board_mod, clients, costs, providers, state as state_mod, wizard
 from .i18n import translator
 from .journal import RunJournal
 from . import verify as verify_mod
@@ -137,6 +138,35 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Run a client that cannot be restricted to read-only "
                             "tools from the command line. The run may modify the "
                             "repository.")
+
+    behaviour_profile = parser.add_argument_group("saved runs")
+    behaviour_profile.add_argument("--profile", default=None, metavar="PATH",
+                                   help="Replay a run saved by the interactive "
+                                        "setup. Flags given alongside it win.")
+
+    multi = parser.add_argument_group("multiclient")
+    multi.add_argument("--multiclient", action="store_true",
+                       help="Route repositories to clients by size and run the "
+                            "clients at the same time. Triages first, so nothing "
+                            "already finished is touched again.")
+    multi.add_argument("--triage-only", action="store_true",
+                       help="Classify the repositories, write the control file "
+                            "and stop. No model is called.")
+    multi.add_argument("--control-file", default=None, metavar="PATH",
+                       help="Where the control file lives "
+                            f"(default: ./{state_mod.CONTROL_FILE}).")
+    multi.add_argument("--small-max-files", type=int, default=200, metavar="N",
+                       help="At or below this many files a repository is small "
+                            "(default: 200).")
+    multi.add_argument("--large-min-files", type=int, default=2000, metavar="N",
+                       help="At or above this many files a repository is large "
+                            "(default: 2000).")
+    multi.add_argument("--client-small", default="opencode", metavar="CLIENT",
+                       help="Client for small repositories (default: opencode).")
+    multi.add_argument("--client-medium", default="claude", metavar="CLIENT",
+                       help="Client for mid-sized repositories (default: claude).")
+    multi.add_argument("--client-large", default="grok", metavar="CLIENT",
+                       help="Client for large repositories (default: grok).")
 
     provider = parser.add_argument_group("provider")
     provider.add_argument("--bedrock", action="store_true",
@@ -344,6 +374,143 @@ def _plan_targets(config: WikiConfig) -> list[WikiConfig]:
         child.extra = dict(config.extra)
         targets.append(child)
     return targets
+
+
+PROGRESS_PAGE = re.compile(r"^\[(\d+)/(\d+)\]")
+PROGRESS_PLAN = re.compile(r"^Plan: (\d+) model-generated")
+
+
+async def _run_lane(
+    client: str, queue: list, config: WikiConfig, board, log_dir: Path,
+    argv_base: list[str],
+) -> None:
+    """One client, its repositories, one at a time.
+
+    Each repository is a separate process. Not for isolation's sake — the
+    generator prints to stdout, and `redirect_stdout` swaps it for the whole
+    process, so three lanes redirecting concurrently would shred each other's
+    output. A subprocess owns its own stdout; the lane reads its progress lines
+    and tees the rest to a log.
+    """
+    for state in queue:
+        board.start(client, state.name)
+        log_path = log_dir / f"{state.name}.log"
+        argv = argv_base + [
+            "--repo", state.path,
+            "--client", client,
+            "--output", str(Path(state.wiki_path).parent),
+        ]
+        pages_done = 0
+        try:
+            with log_path.open("w", encoding="utf-8") as log:
+                process = await asyncio.create_subprocess_exec(
+                    *argv, stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                assert process.stdout is not None
+                async for raw in process.stdout:
+                    line = raw.decode("utf-8", "replace").rstrip()
+                    log.write(line + "\n")
+                    plan = PROGRESS_PLAN.match(line)
+                    if plan:
+                        board.plan(client, int(plan.group(1)))
+                        continue
+                    if PROGRESS_PAGE.match(line):
+                        pages_done += 1
+                        board.page(client)
+                code = await process.wait()
+        except (OSError, asyncio.CancelledError) as exc:
+            board.finish(client, "failed", str(exc)[:80])
+            raise
+        board.finish(
+            client,
+            "done" if code == 0 else "incomplete",
+            "" if code == 0 else f"exit {code}, see {log_path.name}",
+        )
+
+
+async def run_multiclient(config: WikiConfig, args) -> int:
+    """Route repositories to clients by size and run the clients together."""
+    routing = state_mod.Routing(
+        small_max_files=args.small_max_files,
+        large_min_files=args.large_min_files,
+        small=args.client_small, medium=args.client_medium, large=args.client_large,
+    )
+    output_root = Path(config.extra.get("output_root") or config.output_path)
+    repos = find_repositories(config.repo_path) or [config.repo_path]
+
+    print(f"Triaging {len(repos)} repositories (no model calls)...", flush=True)
+    states = state_mod.triage(config, repos, routing, output_root)
+    control = Path(args.control_file or Path.cwd() / state_mod.CONTROL_FILE)
+    state_mod.save(control, states, routing, config, config.repo_path, output_root)
+
+    counts = state_mod.totals(states)
+    print(f"  done {counts['done']} | incomplete {counts['incomplete']} | "
+          f"untouched {counts['untouched']} | skipped {counts['skipped']}", flush=True)
+    for entry in states:
+        mark = {"done": "=", "incomplete": "~", "untouched": "+", "skipped": "-"}
+        print(f"  {mark.get(entry.state, '?')} {entry.name:<28} "
+              f"{entry.files:>6} files  {entry.client:<9} {entry.reason}", flush=True)
+    print(f"  Control file: {control}", flush=True)
+
+    pending = [s for s in states if s.needs_work]
+    if not pending:
+        print("\nNothing to do: every repository is complete.", flush=True)
+        return 0
+    if args.triage_only:
+        return 0
+
+    # Smallest first within each lane, so complete wikis appear early.
+    lanes: dict[str, list] = {}
+    for entry in sorted(pending, key=lambda s: (s.files, s.name)):
+        lanes.setdefault(entry.client, []).append(entry)
+
+    log_dir = control.parent / "wiki-logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    board = board_mod.Board(sorted(lanes), total_repos=len(pending))
+
+    argv_base = [sys.executable, "-m", "wiki_generator",
+                 "--min-lines", str(config.min_lines),
+                 "--concurrency", str(config.concurrency),
+                 "--language", config.language]
+    if config.verify:
+        argv_base.append("--verify")
+    if args.allow_unrestricted_client:
+        argv_base.append("--allow-unrestricted-client")
+
+    print(f"\n{len(pending)} repositories across {len(lanes)} clients:", flush=True)
+    for name, queue in sorted(lanes.items()):
+        print(f"  {name:<9} {len(queue)} repositories", flush=True)
+    print(flush=True)
+
+    async def ticker() -> None:
+        try:
+            while True:
+                await asyncio.sleep(5)
+                board.render()
+        except asyncio.CancelledError:
+            return
+
+    tick = asyncio.create_task(ticker())
+    try:
+        await asyncio.gather(*(
+            _run_lane(name, queue, config, board, log_dir, argv_base)
+            for name, queue in sorted(lanes.items())
+        ))
+    finally:
+        tick.cancel()
+        board.stop()
+
+    # Re-triage: the control file must describe what is true now, not what was
+    # true before the run.
+    states = state_mod.triage(config, repos, routing, output_root)
+    state_mod.save(control, states, routing, config, config.repo_path, output_root)
+    counts = state_mod.totals(states)
+    print(f"\n{board.summary()}", flush=True)
+    print(f"  after re-triage: done {counts['done']} | incomplete "
+          f"{counts['incomplete']} | untouched {counts['untouched']}", flush=True)
+    return 0 if counts["incomplete"] == 0 and counts["untouched"] == 0 else 1
 
 
 async def run_all(config: WikiConfig) -> int:
@@ -793,7 +960,31 @@ async def _verify_phase(
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+
+    # No arguments and someone at the keyboard: ask instead of printing help.
+    # Piped or scripted, --help is still the right answer.
+    if not raw:
+        if not wizard.should_offer():
+            build_parser().print_help()
+            return 0
+        try:
+            raw = wizard.run()
+        except wizard.Cancelled:
+            print("\nStopped.", file=sys.stderr)
+            return 130
+
+    args = build_parser().parse_args(raw)
+    if args.profile:
+        try:
+            saved = wizard.load_profile(Path(args.profile))
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        # Flags given alongside --profile win, so a saved run can be adjusted
+        # without editing the file.
+        args = build_parser().parse_args(saved + [a for a in raw
+                                                  if a not in {"--profile", args.profile}])
     try:
         config = _config_from_args(args)
     except (ValueError, OSError) as exc:
@@ -878,6 +1069,8 @@ def main(argv: list[str] | None = None) -> int:
         pass  # not the main thread, or a platform without SIGTERM
 
     try:
+        if args.multiclient or args.triage_only:
+            return asyncio.run(run_multiclient(config, args))
         return asyncio.run(run_all(config))
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
