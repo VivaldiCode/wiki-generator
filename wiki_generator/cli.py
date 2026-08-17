@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import signal
 import subprocess
@@ -169,6 +170,10 @@ def build_parser() -> argparse.ArgumentParser:
                             "(default: 1). Raise it when one client owns most of "
                             "the tree; total model calls in flight is this times "
                             "--concurrency.")
+    multi.add_argument("--fail-fast", type=int, default=5, metavar="N",
+                       help="Stop when the first N repositories all fail and none "
+                            "has succeeded (default: 5; 0 disables). Everything "
+                            "failing is a misconfiguration, not bad luck.")
     multi.add_argument("--retriage", action="store_true",
                        help="Classify from scratch, ignoring a saved triage. On a "
                             "large tree that costs hours, so a saved one is "
@@ -416,7 +421,8 @@ PROGRESS_PLAN = re.compile(r"^Plan: (\d+) model-generated")
 async def _run_lane(
     client: str, queue: list, config: WikiConfig, board, log_dir: Path,
     argv_base: list[str], bedrock: bool = False, region: str = "",
-    model: str = "", parallel: int = 1, on_done=None,
+    model: str = "", parallel: int = 1, on_done=None, on_failure=None,
+    stop_flag=None,
 ) -> None:
     """One client working its queue, `parallel` repositories at a time.
 
@@ -429,9 +435,16 @@ async def _run_lane(
     semaphore = asyncio.Semaphore(max(1, parallel))
 
     async def one(state) -> None:
+        # Checked here rather than by cancelling the gather: a cancelled lane
+        # still had repositories mid-flight reporting after the summary, which
+        # made the end of the run unreadable.
+        if stop_flag is not None and stop_flag.is_set():
+            return
         async with semaphore:
+            if stop_flag is not None and stop_flag.is_set():
+                return
             await _run_repo(client, state, board, log_dir, argv_base,
-                            bedrock, region, model)
+                            bedrock, region, model, on_failure)
         if on_done:
             await on_done(state)
 
@@ -440,7 +453,7 @@ async def _run_lane(
 
 async def _run_repo(
     client: str, state, board, log_dir: Path, argv_base: list[str],
-    bedrock: bool, region: str, model: str,
+    bedrock: bool, region: str, model: str, on_failure=None,
 ) -> None:
     board.start(client, state.name)
     log_path = log_dir / f"{state.name}.log"
@@ -458,6 +471,7 @@ async def _run_repo(
     if model:
         argv += ["--model", model]
     pages_done = 0
+    reason = ""
     try:
         with log_path.open("w", encoding="utf-8") as log:
             process = await asyncio.create_subprocess_exec(
@@ -471,11 +485,18 @@ async def _run_repo(
                 log.write(line + "\n")
                 plan = PROGRESS_PLAN.match(line)
                 if plan:
-                    board.plan(client, int(plan.group(1)))
+                    board.plan(client, int(plan.group(1)), state.name)
                     continue
                 if PROGRESS_PAGE.match(line):
                     pages_done += 1
-                    board.page(client)
+                    board.page(client, state.name)
+                    continue
+                # The child already writes a usable diagnostic. Keeping the
+                # first one puts the cause on the board, instead of leaving it
+                # in a log nobody opens until the run is over.
+                if not reason and (line.startswith("Error:")
+                                   or line.lstrip().startswith("! ")):
+                    reason = line.strip().lstrip("! ").strip()[:150]
             code = await process.wait()
     except (OSError, asyncio.CancelledError) as exc:
         board.finish(client, "failed", str(exc)[:80], state.name)
@@ -483,9 +504,11 @@ async def _run_repo(
     board.finish(
         client,
         "done" if code == 0 else "incomplete",
-        "" if code == 0 else f"exit {code}, see {log_path.name}",
+        "" if code == 0 else (reason or f"exit {code}, see {log_path.name}"),
         state.name,
     )
+    if code != 0 and on_failure:
+        on_failure(state, reason or f"exit {code}", log_path)
 
 
 
@@ -616,6 +639,17 @@ async def run_multiclient(config: WikiConfig, args) -> int:
                 config.repo_path, output_root,
             )
 
+    # Nothing succeeding is not a run in progress, it is a misconfiguration
+    # repeating itself. At a thousand repositories that difference is hours of
+    # wasted quota and a control file full of failures that describe one cause.
+    failures: list[tuple[str, str]] = []
+    give_up = asyncio.Event()
+
+    def note_failure(state, reason: str, log_path: Path) -> None:
+        failures.append((state.name, reason))
+        if board.done == 0 and len(failures) >= args.fail_fast > 0:
+            give_up.set()
+
     async def ticker() -> None:
         try:
             while True:
@@ -631,12 +665,23 @@ async def run_multiclient(config: WikiConfig, args) -> int:
                       bedrock=config.provider == providers.BEDROCK,
                       region=providers.resolved_region(config.aws_region) or "",
                       model=tier_models.get(name, ""),
-                      parallel=args.repos_in_parallel, on_done=record)
+                      parallel=args.repos_in_parallel, on_done=record,
+                      on_failure=note_failure, stop_flag=give_up)
             for name, queue in sorted(lanes.items())
         ))
     finally:
         tick.cancel()
         board.stop()
+
+    if give_up.is_set():
+        print(f"\nStopped: the first {len(failures)} repositories all failed and "
+              "none succeeded, so this is a misconfiguration rather than bad luck.",
+              file=sys.stderr, flush=True)
+        for name, reason in failures[:5]:
+            print(f"  {name}: {reason}", file=sys.stderr)
+        print(f"  Full output: {log_dir}/<repo>.log", file=sys.stderr)
+        print("  --fail-fast 0 runs the whole queue anyway.", file=sys.stderr)
+        return 2
 
     # No final re-triage: every repository worked on was re-classified as it
     # finished, so the file already describes what is true now — and re-reading
@@ -816,6 +861,15 @@ async def run(
                 print(f"  - {spec.path}")
         return 0
 
+    # Checked before the journal takes its snapshot, because the failure it
+    # otherwise produces — a Permission denied on `.wiki-backup` — names an
+    # internal file and not the cause. The usual cause is an earlier run under
+    # sudo, which leaves the whole output tree owned by root.
+    problem = _output_not_writable(config.output_path)
+    if problem:
+        print(f"  ! {config.repo_path.name}: {problem}", file=sys.stderr)
+        return 1
+
     config.output_path.mkdir(parents=True, exist_ok=True)
 
     generator = WikiGenerator(config, scan)
@@ -987,6 +1041,27 @@ def _record_cost(
         return
     if config.verbose:
         print(f"  Cost record: {target}", flush=True)
+
+
+def _output_not_writable(output: Path) -> str:
+    """Whether the wiki can actually be written, and who to blame if not."""
+    target = output if output.is_dir() else output.parent
+    while not target.exists() and target != target.parent:
+        target = target.parent
+    if not os.access(target, os.W_OK | os.X_OK):
+        owner = ""
+        try:
+            import pwd
+            owner = f" It is owned by {pwd.getpwuid(target.stat().st_uid).pw_name}."
+        except (ImportError, KeyError, OSError):
+            pass
+        return (
+            f"cannot write to {target}.{owner} An earlier run under sudo leaves "
+            f"the output tree owned by root; `sudo chown -R $USER {target}` fixes "
+            "it. Do not re-run under sudo: the client refuses to bypass "
+            "permission prompts as root, so every page fails."
+        )
+    return ""
 
 
 async def _verify_phase(
