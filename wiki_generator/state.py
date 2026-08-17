@@ -110,7 +110,12 @@ def triage(
     """
     total = len(repos)
 
-    def classify(repo: Path) -> RepoState:
+    def classify(repo: Path, index: int = 0) -> RepoState:
+        if on_event and workers > 1:
+            # Without this the parallel path reported only completions, so a
+            # repository that takes ten minutes showed nothing at all — which is
+            # exactly the moment the question "is it stuck?" gets asked.
+            on_event("start", index, total, repo.name, None)
         try:
             return _triage_one(config, repo, routing, output_root)
         except Exception as exc:  # noqa: BLE001 - one bad repo must not stop 1499
@@ -141,10 +146,8 @@ def triage(
     lock = threading.Lock()
     results: dict[int, RepoState] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(classify, repo): (i, repo)
+        futures = {pool.submit(classify, repo, i + 1): (i, repo)
                    for i, repo in enumerate(repos)}
-        for future in futures:
-            pass
         for future in as_completed(futures):
             index, repo = futures[future]
             state = future.result()

@@ -667,8 +667,12 @@ thousands of files takes long enough on its own to look stuck, and only a clock
 that keeps moving tells the two apart.
 
 ```
-  [847/1500] payments-service  0s   done:612 untouched:198 incomplete:36
+  [847/1500] payments-service 612s  billing-api 8s  (+6)   done:612 untouched:198
 ```
+
+Repositories being classified are shown oldest first, with how long each has been
+going — a repository that has been at it for ten minutes is named, with its clock,
+which is the whole point. `--triage-workers` (8) sets how many run at once.
 
 On a terminal that line is rewritten in place and only repositories taking over
 five seconds earn a permanent line. Piped, every repository gets one line, so the

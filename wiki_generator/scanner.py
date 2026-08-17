@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .config import WikiConfig
 from .models import FileInfo, ModuleInfo, RepoScan
-from .utils import read_text, sha1_file, slugify
+from .utils import hash_and_lines, read_text, sha1_file, slugify
 
 class EmptyRepositoryError(ValueError):
     """The repository has nothing a wiki could be built from."""
@@ -351,15 +351,18 @@ def scan_repo(config: WikiConfig) -> RepoScan:
             continue
         if size > config.max_file_size_bytes:
             continue
+        # One read, both facts. Files are read once instead of twice, which on a
+        # large repository over network storage is most of the scan.
+        content_hash, lines = hash_and_lines(abs_path, config.max_file_size_bytes)
         language = _language_for(rel)
         files.append(
             FileInfo(
                 rel_path=rel,
                 size=size,
-                lines=_count_lines(abs_path, config.max_file_size_bytes),
+                lines=lines,
                 language=language,
                 is_source=language in SOURCE_LANGUAGES,
-                content_hash=sha1_file(abs_path),
+                content_hash=content_hash,
             )
         )
 

@@ -43,6 +43,28 @@ def sha1_file(path: Path, max_bytes: int = 2_000_000) -> str:
     return digest.hexdigest()
 
 
+def hash_and_lines(path: Path, line_limit_bytes: int,
+                   max_bytes: int = 2_000_000) -> tuple[str, int]:
+    """Both facts about a file from one read.
+
+    Scanning read every file twice — once to hash it, once to count its lines —
+    and on a large repository over network storage that read is the whole cost.
+    The hash is byte-identical to `sha1_file`, deliberately: it feeds every
+    page's fingerprint, and changing it would mark every existing wiki stale.
+    """
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            data = handle.read(max_bytes)
+    except OSError:
+        return "missing", 0
+    digest = hashlib.sha1(data).hexdigest()
+    if size > line_limit_bytes:
+        return digest, 0  # matches _count_lines: too big to count
+    lines = data.count(b"\n") + (0 if not data or data.endswith(b"\n") else 1)
+    return digest, lines
+
+
 def read_text(path: Path, max_chars: int | None = None) -> str:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")

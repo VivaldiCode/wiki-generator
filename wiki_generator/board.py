@@ -179,8 +179,7 @@ class TriageProgress:
         self._live = bool(getattr(self._stream, "isatty", lambda: False)())
         self._heartbeat = heartbeat
         self._lock = threading.Lock()
-        self._current = ""
-        self._started = 0.0
+        self._inflight: dict[str, float] = {}
         self._index = 0
         self._counts: dict[str, int] = {}
         self._stop = threading.Event()
@@ -204,13 +203,16 @@ class TriageProgress:
     def __call__(self, phase: str, index: int, total: int, name: str, state) -> None:
         if phase == "start":
             with self._lock:
-                self._current, self._started, self._index = name, time.monotonic(), index
+                self._inflight[name] = time.monotonic()
+                self._index = max(self._index, index)
             if self._live:
                 self._paint()
             return
         with self._lock:
             self._counts[state.state] = self._counts.get(state.state, 0) + 1
-            elapsed = time.monotonic() - self._started
+            started = self._inflight.pop(name, time.monotonic())
+            elapsed = time.monotonic() - started
+            self._index = max(self._index, index)
         if not self._live:
             # Piped: one line each, so the log holds the whole classification.
             print(f"  [{index}/{total}] {name} — {state.state} ({elapsed:.1f}s)",
@@ -227,13 +229,16 @@ class TriageProgress:
 
     def _paint(self) -> None:
         with self._lock:
-            if not self._current:
-                return
-            elapsed = time.monotonic() - self._started
             tally = " ".join(f"{k}:{v}" for k, v in sorted(self._counts.items()))
-            line = (f"  [{self._index}/{self.total}] {self._current}  "
-                    f"{elapsed:.0f}s   {tally}") if self._current else (
-                    f"  [{self._index}/{self.total}]   {tally}")
+            now = time.monotonic()
+            # Oldest first: the one that has been going longest is the one the
+            # question is about.
+            oldest = sorted(self._inflight.items(), key=lambda kv: kv[1])[:2]
+            busy = "  ".join(f"{n} {now - t:.0f}s" for n, t in oldest)
+            more = len(self._inflight) - len(oldest)
+            if more > 0:
+                busy += f"  (+{more})"
+            line = f"  [{self._index}/{self.total}] {busy or 'starting'}   {tally}"
         width = shutil.get_terminal_size((100, 24)).columns - 1
         self._stream.write("\r\033[2K" + line[:width])
         self._stream.flush()
