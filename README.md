@@ -1004,6 +1004,13 @@ printing `$0.00`, which would read as "it was free".
 docker build -t wiki-generator -f deploy/Dockerfile .
 ```
 
+**Build for the architecture the task will run on.** Docker builds for the host
+by default, so a Mac or a Graviton instance produces `arm64` and an x86 host
+produces `amd64`. `cpuArchitecture` in the task definition has to match, or the
+task fails at start with *"image manifest does not contain descriptor matching
+platform"*. Force the other one with `--platform linux/amd64` (or `linux/arm64`),
+and set the task definition to the same.
+
 Three details in there are load-bearing:
 
 **The container does not run as root.** There is no terminal to answer a

@@ -7,6 +7,7 @@
   "cpu": "1024",
   "memory": "4096",
   "runtimePlatform": {
+    "_comment_cpuArchitecture": "Must match the image you built. A Mac or a Graviton instance builds ARM64 by default; an x86 build host or `docker build --platform linux/amd64` gives X86_64. A mismatch fails at task start with 'image manifest does not contain descriptor matching platform'.",
     "cpuArchitecture": "X86_64",
     "operatingSystemFamily": "LINUX"
   },
