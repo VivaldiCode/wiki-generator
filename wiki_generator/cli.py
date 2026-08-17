@@ -164,6 +164,15 @@ def build_parser() -> argparse.ArgumentParser:
     multi.add_argument("--list-limit", type=int, default=60, metavar="N",
                        help="Above this many repositories the triage lists only "
                             "the ones needing work (default: 60).")
+    multi.add_argument("--repos-in-parallel", type=int, default=1, metavar="N",
+                       help="Repositories a single client works on at once "
+                            "(default: 1). Raise it when one client owns most of "
+                            "the tree; total model calls in flight is this times "
+                            "--concurrency.")
+    multi.add_argument("--triage-workers", type=int, default=8, metavar="N",
+                       help="Repositories classified at once (default: 8). "
+                            "Classification is file walking and hashing, so this "
+                            "is bounded by disk, not by the model.")
     multi.add_argument("--triage-only", action="store_true",
                        help="Classify the repositories, write the control file "
                             "and stop. No model is called.")
@@ -403,60 +412,75 @@ PROGRESS_PLAN = re.compile(r"^Plan: (\d+) model-generated")
 async def _run_lane(
     client: str, queue: list, config: WikiConfig, board, log_dir: Path,
     argv_base: list[str], bedrock: bool = False, region: str = "",
-    model: str = "",
+    model: str = "", parallel: int = 1,
 ) -> None:
-    """One client, its repositories, one at a time.
+    """One client working its queue, `parallel` repositories at a time.
 
     Each repository is a separate process. Not for isolation's sake — the
     generator prints to stdout, and `redirect_stdout` swaps it for the whole
-    process, so three lanes redirecting concurrently would shred each other's
-    output. A subprocess owns its own stdout; the lane reads its progress lines
-    and tees the rest to a log.
+    process, so concurrent lanes redirecting would shred each other's output. A
+    subprocess owns its own stdout; the lane reads its progress lines and tees
+    the rest to a log.
     """
-    for state in queue:
-        board.start(client, state.name)
-        log_path = log_dir / f"{state.name}.log"
-        argv = argv_base + [
-            "--repo", state.path,
-            "--client", client,
-            "--output", str(Path(state.wiki_path).parent),
-        ]
-        # Bedrock routes Claude Code and nothing else: handed to a grok or
-        # opencode lane it is refused outright, so it travels per lane.
-        if bedrock and client == "claude":
-            argv += ["--bedrock"]
-            if region:
-                argv += ["--aws-region", region]
-        if model:
-            argv += ["--model", model]
-        pages_done = 0
-        try:
-            with log_path.open("w", encoding="utf-8") as log:
-                process = await asyncio.create_subprocess_exec(
-                    *argv, stdin=asyncio.subprocess.DEVNULL,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                )
-                assert process.stdout is not None
-                async for raw in process.stdout:
-                    line = raw.decode("utf-8", "replace").rstrip()
-                    log.write(line + "\n")
-                    plan = PROGRESS_PLAN.match(line)
-                    if plan:
-                        board.plan(client, int(plan.group(1)))
-                        continue
-                    if PROGRESS_PAGE.match(line):
-                        pages_done += 1
-                        board.page(client)
-                code = await process.wait()
-        except (OSError, asyncio.CancelledError) as exc:
-            board.finish(client, "failed", str(exc)[:80])
-            raise
-        board.finish(
-            client,
-            "done" if code == 0 else "incomplete",
-            "" if code == 0 else f"exit {code}, see {log_path.name}",
-        )
+    semaphore = asyncio.Semaphore(max(1, parallel))
+
+    async def one(state) -> None:
+        async with semaphore:
+            await _run_repo(client, state, board, log_dir, argv_base,
+                            bedrock, region, model)
+
+    await asyncio.gather(*(one(state) for state in queue))
+
+
+async def _run_repo(
+    client: str, state, board, log_dir: Path, argv_base: list[str],
+    bedrock: bool, region: str, model: str,
+) -> None:
+    board.start(client, state.name)
+    log_path = log_dir / f"{state.name}.log"
+    argv = argv_base + [
+        "--repo", state.path,
+        "--client", client,
+        "--output", str(Path(state.wiki_path).parent),
+    ]
+    # Bedrock routes Claude Code and nothing else: handed to a grok or
+    # opencode lane it is refused outright, so it travels per lane.
+    if bedrock and client == "claude":
+        argv += ["--bedrock"]
+        if region:
+            argv += ["--aws-region", region]
+    if model:
+        argv += ["--model", model]
+    pages_done = 0
+    try:
+        with log_path.open("w", encoding="utf-8") as log:
+            process = await asyncio.create_subprocess_exec(
+                *argv, stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            assert process.stdout is not None
+            async for raw in process.stdout:
+                line = raw.decode("utf-8", "replace").rstrip()
+                log.write(line + "\n")
+                plan = PROGRESS_PLAN.match(line)
+                if plan:
+                    board.plan(client, int(plan.group(1)))
+                    continue
+                if PROGRESS_PAGE.match(line):
+                    pages_done += 1
+                    board.page(client)
+            code = await process.wait()
+    except (OSError, asyncio.CancelledError) as exc:
+        board.finish(client, "failed", str(exc)[:80], state.name)
+        raise
+    board.finish(
+        client,
+        "done" if code == 0 else "incomplete",
+        "" if code == 0 else f"exit {code}, see {log_path.name}",
+        state.name,
+    )
+
 
 
 async def run_multiclient(config: WikiConfig, args) -> int:
@@ -485,7 +509,7 @@ async def run_multiclient(config: WikiConfig, args) -> int:
     print(f"Triaging {len(repos)} repositories (no model calls)...", flush=True)
     with board_mod.TriageProgress(len(repos)) as progress:
         states = state_mod.triage(config, repos, routing, output_root,
-                                  on_event=progress)
+                                  on_event=progress, workers=args.triage_workers)
     control = Path(args.control_file or Path.cwd() / state_mod.CONTROL_FILE)
     state_mod.save(control, states, routing, config, config.repo_path, output_root)
 
@@ -571,7 +595,8 @@ async def run_multiclient(config: WikiConfig, args) -> int:
             _run_lane(name, queue, config, board, log_dir, argv_base,
                       bedrock=config.provider == providers.BEDROCK,
                       region=providers.resolved_region(config.aws_region) or "",
-                      model=tier_models.get(name, ""))
+                      model=tier_models.get(name, ""),
+                      parallel=args.repos_in_parallel)
             for name, queue in sorted(lanes.items())
         ))
     finally:

@@ -20,6 +20,8 @@ tree on the giant ones, and the default in between.
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,7 +99,7 @@ ERROR = "error"
 
 def triage(
     config: WikiConfig, repos: list[Path], routing: Routing,
-    output_root: Path | None = None, on_event=None,
+    output_root: Path | None = None, on_event=None, workers: int = 1,
 ) -> list[RepoState]:
     """Classify every repository. Deterministic: no model is called.
 
@@ -106,23 +108,53 @@ def triage(
     long silence and a run you can see the shape of — and each repository costs a
     full scan, so the silence is minutes, not seconds.
     """
-    states: list[RepoState] = []
     total = len(repos)
-    for index, repo in enumerate(repos, start=1):
-        if on_event:
-            on_event("start", index, total, repo.name, None)
+
+    def classify(repo: Path) -> RepoState:
         try:
-            state = _triage_one(config, repo, routing, output_root)
+            return _triage_one(config, repo, routing, output_root)
         except Exception as exc:  # noqa: BLE001 - one bad repo must not stop 1499
-            state = RepoState(
+            return RepoState(
                 name=repo.name, path=str(repo), wiki_path="", files=0,
                 client=routing.medium, state=ERROR,
                 reason=f"could not be classified: {exc}"[:200],
             )
-        states.append(state)
-        if on_event:
-            on_event("done", index, total, repo.name, state)
-    return states
+
+    if workers <= 1:
+        states: list[RepoState] = []
+        for index, repo in enumerate(repos, start=1):
+            if on_event:
+                on_event("start", index, total, repo.name, None)
+            state = classify(repo)
+            states.append(state)
+            if on_event:
+                on_event("done", index, total, repo.name, state)
+        return states
+
+    # Classifying is walking and hashing files — I/O, not computation — so
+    # threads help despite the GIL, and on a tree of thousands this is the
+    # difference between minutes and an hour. Results are put back in the input
+    # order, so the report does not depend on which repository finished first.
+    from concurrent.futures import ThreadPoolExecutor
+
+    done = 0
+    lock = threading.Lock()
+    results: dict[int, RepoState] = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(classify, repo): (i, repo)
+                   for i, repo in enumerate(repos)}
+        for future in futures:
+            pass
+        for future in as_completed(futures):
+            index, repo = futures[future]
+            state = future.result()
+            results[index] = state
+            with lock:
+                done += 1
+                position = done
+            if on_event:
+                on_event("done", position, total, repo.name, state)
+    return [results[i] for i in range(len(repos))]
 
 
 def _wiki_path(config: WikiConfig, repo: Path, output_root: Path | None) -> Path:

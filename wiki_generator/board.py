@@ -21,28 +21,39 @@ from dataclasses import dataclass, field
 
 
 @dataclass
-class Lane:
-    """One client, working one repository at a time."""
-
-    client: str
-    repo: str = ""
+class Active:
+    repo: str
+    started_at: float
     pages_done: int = 0
     pages_total: int = 0
-    started_at: float = 0.0
-    status: str = "idle"        # idle | working | done | failed
-    detail: str = ""
-    completed: int = 0          # repositories this lane finished
+
+
+@dataclass
+class Lane:
+    """One client. It may be working several repositories at once."""
+
+    client: str
+    active: dict = field(default_factory=dict)
+    completed: int = 0
+    last: str = ""
 
     def line(self, width: int) -> str:
-        if self.status == "idle":
-            body = "idle"
-        elif self.status == "working":
-            elapsed = time.monotonic() - self.started_at if self.started_at else 0
-            pages = (f"{self.pages_done}/{self.pages_total} pages"
-                     if self.pages_total else "scanning")
-            body = f"{self.repo}  {pages}  {elapsed / 60:.0f}m"
+        if not self.active:
+            body = f"idle  ({self.completed} done)" if self.completed else "idle"
+            if self.last:
+                body += f"   last: {self.last}"
         else:
-            body = f"{self.repo}  {self.status}{f' — {self.detail}' if self.detail else ''}"
+            # One repository gets named; several get counted, because three
+            # names and their page counts do not fit on a line and the count is
+            # what tells you the lane is saturated.
+            parts = []
+            for entry in list(self.active.values())[:2]:
+                elapsed = time.monotonic() - entry.started_at
+                pages = (f"{entry.pages_done}/{entry.pages_total}"
+                         if entry.pages_total else "scan")
+                parts.append(f"{entry.repo} {pages} {elapsed / 60:.0f}m")
+            more = len(self.active) - len(parts)
+            body = "  |  ".join(parts) + (f"  (+{more} more)" if more > 0 else "")
         return f"[{self.client:<9}] {body}"[:width]
 
 
@@ -64,31 +75,48 @@ class Board:
     # ------------------------------------------------------------------
     def start(self, client: str, repo: str, pages_total: int = 0) -> None:
         with self._lock:
-            lane = self.lanes[client]
-            lane.repo, lane.pages_total, lane.pages_done = repo, pages_total, 0
-            lane.started_at, lane.status, lane.detail = time.monotonic(), "working", ""
+            self.lanes[client].active[repo] = Active(
+                repo=repo, started_at=time.monotonic(), pages_total=pages_total
+            )
         self._announce(f"{client} -> {repo}")
 
-    def plan(self, client: str, pages_total: int) -> None:
+    def plan(self, client: str, pages_total: int, repo: str = "") -> None:
         with self._lock:
-            self.lanes[client].pages_total = pages_total
+            for entry in self._targets(client, repo):
+                entry.pages_total = pages_total
 
-    def page(self, client: str) -> None:
+    def page(self, client: str, repo: str = "") -> None:
         with self._lock:
-            self.lanes[client].pages_done += 1
+            for entry in self._targets(client, repo):
+                entry.pages_done += 1
 
-    def finish(self, client: str, status: str, detail: str = "") -> None:
+    def _targets(self, client: str, repo: str) -> list:
+        """Named repository when known; otherwise the lane's only active one.
+
+        With several repositories in flight an unattributed page cannot be
+        assigned, so it is dropped rather than credited to the wrong one.
+        """
+        lane = self.lanes[client]
+        if repo:
+            entry = lane.active.get(repo)
+            return [entry] if entry else []
+        return list(lane.active.values()) if len(lane.active) == 1 else []
+
+    def finish(self, client: str, status: str, detail: str = "",
+               repo: str = "") -> None:
         with self._lock:
             lane = self.lanes[client]
-            lane.status, lane.detail = status, detail
+            if not repo:
+                repo = next(iter(lane.active), "")
+            lane.active.pop(repo, None)
             lane.completed += 1
+            lane.last = f"{repo} {status}"
             if status == "failed":
                 self.failed += 1
             elif status == "incomplete":
                 self.incomplete += 1
             else:
                 self.done += 1
-            repo = lane.repo
         self._announce(f"{client} finished {repo}: {status}"
                        + (f" ({detail})" if detail else ""))
 
@@ -204,7 +232,8 @@ class TriageProgress:
             elapsed = time.monotonic() - self._started
             tally = " ".join(f"{k}:{v}" for k, v in sorted(self._counts.items()))
             line = (f"  [{self._index}/{self.total}] {self._current}  "
-                    f"{elapsed:.0f}s   {tally}")
+                    f"{elapsed:.0f}s   {tally}") if self._current else (
+                    f"  [{self._index}/{self.total}]   {tally}")
         width = shutil.get_terminal_size((100, 24)).columns - 1
         self._stream.write("\r\033[2K" + line[:width])
         self._stream.flush()
