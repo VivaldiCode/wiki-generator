@@ -90,14 +90,23 @@ it win, so a saved run can be adjusted without editing the file.
 
 ## Install
 
-Requires **Python 3.10+** and [Claude Code](https://claude.com/claude-code) installed and
-authenticated.
+Requires **Python 3.10+** and at least one [client CLI](#choosing-a-client)
+installed and authenticated.
+
+**Nothing needs installing.** There are no dependencies outside the standard
+library, so a checkout runs as it is — which is what the container image does:
 
 ```bash
-claude auth          # if not authenticated yet
 git clone https://github.com/VivaldiCode/wiki-generator.git
 cd wiki-generator
-pip install -e .
+python3 -m wiki_generator --help
+```
+
+To get the `wiki-generator` command on your PATH, install it into a virtual
+environment:
+
+```bash
+python3 -m venv ~/.venv/wikigen && ~/.venv/wikigen/bin/pip install -e .
 ```
 
 Verify:
@@ -105,6 +114,14 @@ Verify:
 ```bash
 wiki-generator --version
 ```
+
+> **On a server, avoid `sudo pip install`.** It writes into the system Python,
+> which the distribution owns; newer Debian and Ubuntu refuse it outright
+> (PEP 668). If an editable install fails with *"its build backend is missing
+> the 'build_editable' hook"*, the host's `pip` or `setuptools` predates PEP 660
+> — `pip install --upgrade pip setuptools` fixes it, and a `setup.py` shim is
+> included so older toolchains fall back instead of stopping. Or skip the
+> install entirely and use `python3 -m wiki_generator`.
 
 ---
 
