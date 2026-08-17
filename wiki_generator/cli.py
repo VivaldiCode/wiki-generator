@@ -385,7 +385,7 @@ PROGRESS_PLAN = re.compile(r"^Plan: (\d+) model-generated")
 
 async def _run_lane(
     client: str, queue: list, config: WikiConfig, board, log_dir: Path,
-    argv_base: list[str],
+    argv_base: list[str], bedrock: bool = False, region: str = "",
 ) -> None:
     """One client, its repositories, one at a time.
 
@@ -403,6 +403,12 @@ async def _run_lane(
             "--client", client,
             "--output", str(Path(state.wiki_path).parent),
         ]
+        # Bedrock routes Claude Code and nothing else: handed to a grok or
+        # opencode lane it is refused outright, so it travels per lane.
+        if bedrock and client == "claude":
+            argv += ["--bedrock"]
+            if region:
+                argv += ["--aws-region", region]
         pages_done = 0
         try:
             with log_path.open("w", encoding="utf-8") as log:
@@ -447,6 +453,14 @@ async def run_multiclient(config: WikiConfig, args) -> int:
     explicit = config.extra.get("output_root")
     output_root = Path(explicit) if explicit else None
     repos = find_repositories(config.repo_path) or [config.repo_path]
+
+    if config.provider == providers.BEDROCK:
+        if "claude" not in {routing.small, routing.medium, routing.large}:
+            print("Error: --bedrock applies to the claude client, which no tier "
+                  "is routed to.", file=sys.stderr)
+            return 2
+        print(f"Claude lanes run on Bedrock "
+              f"({providers.resolved_region(config.aws_region)}).", flush=True)
 
     print(f"Triaging {len(repos)} repositories (no model calls)...", flush=True)
     with board_mod.TriageProgress(len(repos)) as progress:
@@ -525,7 +539,9 @@ async def run_multiclient(config: WikiConfig, args) -> int:
     tick = asyncio.create_task(ticker())
     try:
         await asyncio.gather(*(
-            _run_lane(name, queue, config, board, log_dir, argv_base)
+            _run_lane(name, queue, config, board, log_dir, argv_base,
+                      bedrock=config.provider == providers.BEDROCK,
+                      region=providers.resolved_region(config.aws_region) or "")
             for name, queue in sorted(lanes.items())
         ))
     finally:
@@ -1039,7 +1055,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
-    if config.provider == providers.BEDROCK and config.client != "claude":
+    if (config.provider == providers.BEDROCK and config.client != "claude"
+            and not (args.multiclient or args.triage_only)):
         print(f"Error: --bedrock routes Claude Code through Amazon Bedrock; the "
               f"'{config.client}' client authenticates on its own.", file=sys.stderr)
         return 2

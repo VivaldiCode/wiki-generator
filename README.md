@@ -56,6 +56,19 @@ Clients on this machine:
 Piped or scripted, it prints `--help` instead — the wizard only appears when
 there is someone there to answer.
 
+When Claude will actually run — as the single client, or as a tier in a
+multiclient run — it also offers Bedrock, and settles the region there rather
+than letting a missing one surface on the first model call:
+
+```
+  Run the Claude lanes on Amazon Bedrock instead of the subscription (y/n) [n]: y
+    Region from your environment: us-east-1
+  AWS region [us-east-1]:
+    AWS credentials found; the usual chain will be used.
+    Model access is granted per region in the Bedrock console; a model you have
+    not been granted returns AccessDeniedException.
+```
+
 **Saved answers are offered back on the next run.** Profiles live in
 `~/.config/wiki-generator/`, so they are found from any directory, and a no-argument
 run lists what it found before asking anything:
@@ -639,6 +652,11 @@ recorded as `error` and the other 1499 carry on.
 
 Change the boundaries with `--small-max-files` / `--large-min-files`, and the
 clients with `--client-small` / `--client-medium` / `--client-large`.
+
+`--bedrock` works here too, and reaches **only the Claude lanes** — it routes
+Claude Code and nothing else, so handing it to a `grok` or `opencode` lane would
+have the run refuse itself. If no tier is routed to `claude`, the flag is
+rejected up front rather than silently doing nothing.
 
 ### One line per client
 

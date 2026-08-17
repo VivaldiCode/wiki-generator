@@ -127,6 +127,7 @@ def run() -> list[str]:
         f"Split the {len(repos)} repositories across {len(usable)} clients by size",
         default=True,
     )
+    tiers: list[str] = []
     if multi:
         argv.append("--multiclient")
         small = _ask_int("Small repositories are at or below this many files", 200)
@@ -137,16 +138,24 @@ def run() -> list[str]:
             pick = _ask_choice(f"Client for {tier} repositories", usable,
                                default if default in usable else usable[0])
             argv += [f"--client-{tier}", pick]
+            tiers.append(pick)
     else:
         client = _ask_choice("Client", usable,
                              "claude" if "claude" in usable else usable[0])
         argv += ["--client", client]
+        tiers.append(client)
         argv += ["--model", _ask_model(client)]
 
     if "opencode" in (argv + usable) and not clients.get(
         "opencode"
     ).capabilities.tool_restriction:
         argv.append("--allow-unrestricted-client")
+
+    # Bedrock is a property of the claude client only, so it is offered exactly
+    # when claude will actually run — and in a multiclient run it reaches only
+    # the claude lanes.
+    if "claude" in tiers:
+        argv += _ask_bedrock(multi)
 
     # --- how ---------------------------------------------------------------
     language = _ask("Wiki language (en, pt, pt-br)", "en")
@@ -204,6 +213,36 @@ def _ask_model(client: str) -> str:
     answer = _ask("Model (a name not listed will be pulled)",
                   ollama.PREFIX + suggestion)
     return answer if "/" in answer else ollama.PREFIX + answer
+
+
+def _ask_bedrock(multi: bool) -> list[str]:
+    """Offer Amazon Bedrock for the Claude client, and settle the region here.
+
+    A missing region is the failure that otherwise surfaces on the first model
+    call, tens of minutes into a run — so it is asked for now, with whatever the
+    environment already resolves as the default.
+    """
+    from . import providers
+
+    scope = "the Claude lanes" if multi else "Claude"
+    if not _ask_yes(f"Run {scope} on Amazon Bedrock instead of the subscription",
+                    default=False):
+        return []
+
+    resolved = providers.resolved_region(None)
+    if resolved:
+        print(f"    Region from your environment: {resolved}")
+    region = _ask("AWS region", resolved or "us-east-1")
+
+    if providers.has_credentials():
+        print("    AWS credentials found; the usual chain will be used.")
+    else:
+        print("    No AWS credentials in the environment or ~/.aws. That is "
+              "normal on EC2/ECS/EKS, where the role is resolved at call time, "
+              "and a misconfiguration anywhere else.")
+    print("    Model access is granted per region in the Bedrock console; a "
+          "model you have not been granted returns AccessDeniedException.")
+    return ["--bedrock", "--aws-region", region]
 
 
 def _install_hint(name: str) -> str:
