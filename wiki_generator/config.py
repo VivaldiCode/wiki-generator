@@ -67,11 +67,11 @@ class WikiConfig:
     include_reference: bool = True
 
     # --- interface contracts (opt-in) ---
-    # Off by default for one reason: the plan's page list goes into every page's
-    # prompt, and the prompt is hashed into every page's fingerprint. Turning
-    # this on for a repository that has interfaces therefore regenerates that
-    # wiki in full. A repository with none is unaffected, because its plan does
-    # not change. Deciding to pay for that belongs to whoever pays.
+    # Additive: turning it on adds pages and leaves every existing page cached
+    # (the planner hands the rest of the wiki the same index it would have had
+    # without the section, so no other prompt changes). Still opt-in, because
+    # those new pages are paid work and quietly adding them to everyone's run
+    # is not a default to change on someone else's behalf.
     interfaces: bool = False
 
     include_globs: tuple[str, ...] = ()

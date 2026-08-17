@@ -585,15 +585,28 @@ that omits one is regenerated with the missing paths listed explicitly — the s
 mechanism the per-file reference pages use. If a path is still missing after the retry,
 the page says so rather than pretending to be complete.
 
-### Cost, and why it is off by default
+### Adding it to a wiki that already exists costs only the new pages
 
-The page plan goes into every page's prompt, and the prompt is hashed into every page's
-fingerprint. Turning this on for a repository that **has** interfaces therefore
-regenerates that wiki in full; a repository with none is unaffected, because its plan
-does not change.
+This is additive, and deliberately so. The page plan goes into every page's prompt and
+the prompt is hashed into every page's fingerprint, so a naive implementation would
+restate every prompt and re-bill an entire wiki to add a section to it. Instead the
+planner hands the rest of the wiki **exactly the index it would have had without the
+section**, byte for byte, and only the interface pages see the whole vault.
 
-That is the whole reason for the flag. Enable it before generating a tree, not after:
-on repositories not yet documented it costs only the new pages, typically two or three.
+Measured on four repositories, enabling the flag changes **0 of 21, 0 of 27, 0 of 37 and
+0 of 84** existing fingerprints, and adds three pages to each of the three that have
+interfaces. End to end on a repository already documented: four existing pages `cached`
+at no cost, five new pages generated for $0.25 on haiku.
+
+The cost of that choice is one-directional linking: pages written before the section
+cannot wikilink into it. The interface pages link outward, and `README.md` and
+`SUMMARY.md` — written here, not by a model — list everything either way.
+
+Turning it back off is free in the same way, and removes the section rather than leaving
+a stale copy of it.
+
+It stays opt-in because the new pages are still paid work, not because enabling it is
+expensive for what is already there.
 
 When it is off and a repository contains a `.proto` or an `openapi.yaml`, the run says
 so in one line. That check reads the file listing the scan already has, so it costs

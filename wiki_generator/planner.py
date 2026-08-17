@@ -185,21 +185,44 @@ def build_plan(
     # 2nd pass: now that every page is known, build the prompts with the vault
     # index, so the model cannot invent wikilink targets. The deterministic
     # pages are listed too — they are real notes, and a link to one resolves.
-    listed = [(spec.path[:-3], spec.title) for spec in specs]
+    #
+    # Two indexes, not one, and the reason is money. This block goes into every
+    # page's prompt, and the prompt is hashed into every page's fingerprint. If
+    # the interface pages appeared in the index the rest of the wiki sees, then
+    # adding the section to an existing wiki would restate every prompt and
+    # regenerate every page — turning an additive feature into a full re-bill of
+    # work that was already paid for. So the existing pages are handed exactly
+    # the index they would have been handed without the section, byte for byte,
+    # and only the interface pages see the whole vault.
+    #
+    # The cost is one-directional linking: pages written before the section
+    # cannot link into it. The interface pages link outward, and the index and
+    # summary — written here, not by a model — list everything either way.
+    listed = [(spec.path[:-3], spec.title) for spec in specs
+              if spec.kind != "interfaces"]
     if graph_context:
         # These two titles are literals rather than `t(...)` calls, and wrongly
-        # in Portuguese, because the string lands in every page's prompt and the
-        # prompt is hashed into every page's fingerprint. Translating them here
-        # would mark every existing wiki stale and re-bill its owner for a label
-        # that appears in no output. It is fixed when the structure version next
-        # changes, and not before.
+        # in Portuguese, for the same reason: the string lands in every page's
+        # prompt. Translating them would mark every existing wiki stale and
+        # re-bill its owner for a label that appears in no output. It is fixed
+        # when the structure version next changes, and not before.
         listed += [("07-cartography/file-graph", "Cartografia — Grafo de Ficheiros"),
                    ("07-cartography/module-graph", "Cartografia — Grafo de Modulos")]
-    if iscan is not None and iscan.has_interfaces:
-        listed.append((INVENTORY_PATH[:-3], t("iface.inventory.title")))
     page_index = wiki_pages_block(listed)
+
+    interface_index = page_index
+    if iscan is not None and iscan.has_interfaces:
+        interface_index = wiki_pages_block(
+            listed
+            + [(INVENTORY_PATH[:-3], t("iface.inventory.title"))]
+            + [(spec.path[:-3], spec.title) for spec in specs
+               if spec.kind == "interfaces"]
+        )
+
     for spec, builder in zip(specs, prompt_builders):
-        spec.prompt = builder(page_index)
+        spec.prompt = builder(
+            interface_index if spec.kind == "interfaces" else page_index
+        )
 
     specs.sort(key=lambda spec: spec.order)
 

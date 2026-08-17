@@ -132,9 +132,8 @@ def build_parser() -> argparse.ArgumentParser:
                                 "gRPC services, message topics and raw sockets, "
                                 "both exposed and consumed. Adds section 8, and "
                                 "only for repositories where interfaces are "
-                                "actually found. Off by default because it "
-                                "changes the page plan, which regenerates an "
-                                "existing wiki in full.")
+                                "actually found. Additive: pages already in the "
+                                "wiki stay cached and are not paid for again.")
     structure.add_argument("--no-interfaces", action="store_true",
                            help="Force the interface section off, overriding a "
                                 "config file or saved profile.")

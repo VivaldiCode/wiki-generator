@@ -188,8 +188,8 @@ def run() -> list[str]:
 
     print("\n  Interfaces: a reference section for the endpoints, RPC services,")
     print("  topics and sockets this code exposes and calls — written only for")
-    print("  repositories where they are found. On an existing wiki it changes")
-    print("  the page plan, so those repositories are regenerated in full.")
+    print("  repositories where they are found. Added to an existing wiki it")
+    print("  costs the new pages only; everything already there stays cached.")
     if _ask_yes("Document the interface contracts (--interfaces)", default=True):
         argv.append("--interfaces")
 
